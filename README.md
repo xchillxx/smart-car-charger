@@ -259,7 +259,7 @@ Tankerkönig API key:
 | Spritpreis | `number` | €/L used for the comparison. Set it by hand; with a Tankerkönig API key the integration overwrites it hourly with the cheapest local price (same as the auto-calibrated capacity/power numbers). Attrs: `quelle` (`manuell` / `tankerkoenig`), station, distance |
 | Verbrenner-Break-even | `sensor` | **at/above how many ct/kWh the combustion car is cheaper per km.** Attrs: `guenstiger_jetzt` (eauto/verbrenner vs. the current spot price), ct/100 km each way, the assumptions used |
 | Verbrenner-Verbrauch | `number` | combustion car's L/100 km |
-| E-Auto-Verbrauch (ab Steckdose) | `number` | EV kWh/100 km incl. charging losses; auto-calibrated from the odometer + charge-energy statistics when both are configured, otherwise the value set here |
+| E-Auto-Verbrauch (ab Steckdose) | `number` | EV kWh/100 km incl. charging losses; auto-calibrated from the odometer + charge-energy statistics when both are configured (the battery's net state-of-charge change inside the window is subtracted, so a window that ends right after a charge doesn't read too high), otherwise the value set here |
 
 `break-even (ct/kWh) = L/100 km × fuel ct/L ÷ EV kWh/100 km`.
 

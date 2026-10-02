@@ -139,6 +139,10 @@ DEFAULT_EV_CONSUMPTION_KWH_100KM = 20.0  # from the socket, incl. charging losse
 EV_CONSUMPTION_LOOKBACK_DAYS = 90
 EV_CONSUMPTION_MIN_KM = 300.0  # need this much distance in the window to trust the ratio
 EV_CONSUMPTION_RECALC_INTERVAL_SECONDS = 6 * 3600
+# Share of the energy drawn at the wallbox that ends up in the car's battery
+# (charger + cable losses ≈ 10 %). Used to value the battery's net state-of-
+# charge change inside the consumption window, see consumption_estimator.py.
+CHARGE_EFFICIENCY = 0.90
 
 PRICE_SOURCE_TIBBER = "tibber"
 # Only Tibber is implemented today (see price_source.py) — kept as a select

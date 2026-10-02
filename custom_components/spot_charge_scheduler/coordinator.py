@@ -786,6 +786,8 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
             self.hass,
             self._config.get(CONF_ODOMETER_ENTITY),
             self._config.get(CONF_CHARGE_ENERGY_ENTITY),
+            self._config.get(CONF_SOC_SENSOR),
+            self.planner_state.battery_capacity_kwh,
         )
         if estimate is not None and estimate > 0:
             self.planner_state.ev_consumption_kwh_100km = estimate
