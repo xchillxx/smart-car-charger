@@ -16,6 +16,7 @@ are absorbed by the home battery and are not tracked by any slow controller.
 from __future__ import annotations
 
 import math
+from statistics import median
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -109,7 +110,13 @@ def window_means(samples: list[Sample], now: datetime) -> tuple[float, float, fl
     if coverage < MIN_WINDOW_COVERAGE_MINUTES:
         return None
     pv = sum(s.pv_kw for s in window) / len(window)
-    base = sum(max(s.base_kw, MIN_BASE_LOAD_KW) for s in window) / len(window)
+    # MEDIAN, not mean, for the base load: the house-load reading (Huawei
+    # plant data) only updates every ~5 min while the car's power is live, so
+    # at every charge start/stop base = load − wallbox is wrong for a few
+    # minutes (live 2026-10-02: 10 kW for 4 min after unplugging). A median
+    # ignores such short outliers; a real, lasting load change shows up once
+    # it covers half the window.
+    base = median(max(s.base_kw, MIN_BASE_LOAD_KW) for s in window)
     return pv, base, coverage
 
 
@@ -140,7 +147,7 @@ def decide(
     raw = raw_slow
     if len(short) >= SHORT_CAP_MIN_SAMPLES:
         s_pv = sum(x.pv_kw for x in short) / len(short)
-        s_base = sum(max(x.base_kw, MIN_BASE_LOAD_KW) for x in short) / len(short)
+        s_base = median(max(x.base_kw, MIN_BASE_LOAD_KW) for x in short)
         raw_short = max(0, min(MAX_AMPS, math.floor((s_pv - s_base - target) * 1000.0 / (VOLTAGE * PHASES))))
         raw = min(raw_slow, raw_short)
     if raw >= MIN_AMPS:
