@@ -116,8 +116,7 @@ because the car-side current limit works below a wallbox's own PV mode too.
   last 3 minutes of `PV − house load` with the battery target and cuts the
   current **immediately** when the battery would discharge or the grid
   would be used (down to the 5 A minimum, then stop); it raises the current
-  only after 5 minutes of clear surplus (> 1 kW). The 15-minute decision is
-  capped by the last 5 minutes so it can't undo a brake. This is what makes
+  only after 5 minutes of clear surplus (> 1 kW). This is what makes
   it safe to leave the wallbox unregulated (e.g. fixed 11 kW) and let this
   integration be the only controller. Without it, a decision is taken
   immediately on plug-in and on a wallbox-mode change (`Smart Ampere` shows

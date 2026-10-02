@@ -70,9 +70,6 @@ FAST_UP_THRESHOLD_KW = 1.0
 # After the current was changed, ignore this long (the car and the load
 # readings need to settle) and only judge samples taken afterwards.
 SETTLE_SECONDS = 60
-# The slow decision may not exceed what the last few minutes support.
-SHORT_CAP_WINDOW_MINUTES = 5
-SHORT_CAP_MIN_SAMPLES = 3
 
 
 def amps_to_kw(amps: float) -> float:
@@ -140,16 +137,7 @@ def decide(
     pv, base, coverage = means
     target = battery_target_kw(battery_soc)
     surplus = pv - base - target
-    raw_slow = max(0, min(MAX_AMPS, math.floor(surplus * 1000.0 / (VOLTAGE * PHASES))))
-    # Never promise more than the last few minutes support (otherwise a slow
-    # decision would undo the fast brake right after a cloud arrived).
-    short = [s for s in samples if s.ts > now - timedelta(minutes=SHORT_CAP_WINDOW_MINUTES)]
-    raw = raw_slow
-    if len(short) >= SHORT_CAP_MIN_SAMPLES:
-        s_pv = sum(x.pv_kw for x in short) / len(short)
-        s_base = median(max(x.base_kw, MIN_BASE_LOAD_KW) for x in short)
-        raw_short = max(0, min(MAX_AMPS, math.floor((s_pv - s_base - target) * 1000.0 / (VOLTAGE * PHASES))))
-        raw = min(raw_slow, raw_short)
+    raw = max(0, min(MAX_AMPS, math.floor(surplus * 1000.0 / (VOLTAGE * PHASES))))
     if raw >= MIN_AMPS:
         amps, low_windows, reason = raw, 0, "ueberschuss"
     else:
@@ -166,7 +154,6 @@ def decide(
         "akku_ziel_kw": round(target, 2),
         "ueberschuss_kw": round(surplus, 2),
         "ampere_roh": raw,
-        "ampere_roh_30min": raw_slow,
         "ampere": amps,
         "soll_leistung_kw": round(amps_to_kw(amps), 2),
         "fenster_unter_minimum": low_windows,
