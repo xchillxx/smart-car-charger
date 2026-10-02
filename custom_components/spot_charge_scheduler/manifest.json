@@ -13,5 +13,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/xchillxx/smart-car-charger/issues",
   "requirements": [],
-  "version": "0.21.3"
+  "version": "0.21.4"
 }

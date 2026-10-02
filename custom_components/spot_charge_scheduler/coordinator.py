@@ -179,6 +179,11 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self.smart_fast: dict | None = None
         self._smart_backfilled = False
         self._smart_last_wb_mode: str | None = None
+        self._smart_is_charging: bool | None = None
+        # After a plug-in / mode-change decision the car may still start
+        # charging by itself (wallbox unregulated): see _smart_enforce_idle.
+        self._smart_forced_at: datetime | None = None
+        self._smart_autostart_handled = True
         # Vehicle-API commands sent by Smart per local day (Fleet API budget).
         self._smart_cmd_date: str | None = None
         self._smart_cmd_count = 0
@@ -399,6 +404,7 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
 
         if self.smart_active:
             await self._smart_apply(now, plugged_in, is_home, current_soc, car_charge_limit)
+            await self._smart_enforce_idle(now, plugged_in, is_home)
             if smart_surplus.FAST_LOOP_ENABLED:
                 await self._smart_fast_cycle(now, plugged_in, is_home)
         else:
@@ -486,8 +492,12 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self._smart_last_wallbox_kw = wallbox
         self._smart_last_bat_soc = bat_soc
 
-        just_plugged = plugged_in is True and self._smart_last_plugged is not True
-        self._smart_last_plugged = plugged_in
+        # Only a real False -> True edge counts (not the first reading after
+        # an HA restart, which would otherwise look like a fresh plug-in).
+        just_plugged = plugged_in is True and self._smart_last_plugged is False
+        if plugged_in is not None:
+            self._smart_last_plugged = plugged_in
+        self._smart_is_charging = is_charging
         # A wallbox mode change (e.g. PV Power -> Normal Charge) also
         # warrants an immediate decision: the 30-min buffer is always there.
         mode_state = self.hass.states.get(cfg.get(CONF_PAUSE_MODE_SENSOR) or "")
@@ -497,17 +507,22 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         )
         if wb_mode is not None:
             self._smart_last_wb_mode = wb_mode
-        just_plugged = just_plugged or mode_changed
+        forced = just_plugged or mode_changed
         slot = smart_surplus.decision_slot(now)
-        if slot == self._smart_last_slot and not just_plugged:
+        if slot == self._smart_last_slot and not forced:
             return True
 
-        charging_now = self._charge_switch_on()
+        # Live TeslaMate "is charging" beats the slowly polled Fleet switch:
+        # a car that starts charging by itself on plug-in must be seen at once.
+        charging_now = is_charging if is_charging is not None else self._charge_switch_on()
         decision = smart_surplus.decide(
-            self._smart_samples, now, bat_soc, charging_now, self._smart_low_windows
+            self._smart_samples, now, bat_soc, charging_now, self._smart_low_windows, forced
         )
         if decision is None:
             return True  # not enough data yet; retried next cycle
+        if forced:
+            self._smart_forced_at = now
+            self._smart_autostart_handled = False
         self._smart_last_slot = slot
         self._smart_low_windows = decision["fenster_unter_minimum"]
         self.smart_decision = decision
@@ -525,6 +540,52 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
     def _charge_switch_on(self) -> bool:
         state = self.hass.states.get(self._config[CONF_CHARGE_SWITCH])
         return state is not None and state.state == "on"
+
+    def _smart_charge_active(self) -> bool:
+        """Charging per the Fleet switch OR the live TeslaMate sensor."""
+        return self._charge_switch_on() or self._smart_is_charging is True
+
+    async def _smart_enforce_idle(
+        self, now: datetime, plugged_in: bool | None, is_home: bool | None
+    ) -> None:
+        """A plug-in decision of 0 A can be followed by the car starting to
+        charge on its own seconds later (unregulated wallbox, live-observed
+        2026-10-02): stop it once, but only within a few minutes of that
+        decision — a deliberate manual start later on is not fought."""
+        d = self.smart_decision
+        if (
+            d is None or not self._smart_applied or d["ampere"] != 0
+            or self._smart_autostart_handled or self._smart_forced_at is None
+            or (now - self._smart_forced_at).total_seconds() > 300
+            or self._smart_is_charging is not True
+            or not self.planner_state.master_switch_on
+            or plugged_in is False or is_home is False
+            or (self._smart_retry_at is not None and now < self._smart_retry_at)
+        ):
+            return
+        try:
+            await self.hass.services.async_call(
+                "switch", "turn_off", {"entity_id": self._config[CONF_CHARGE_SWITCH]}, blocking=True
+            )
+        except Exception as err:  # noqa: BLE001
+            self._smart_fail_count += 1
+            delay = (1, 2, 5, 10)[min(self._smart_fail_count, 4) - 1]
+            self._smart_retry_at = now + timedelta(minutes=delay)
+            self.smart_error = {
+                "zeit": now.isoformat(), "ziel_ampere": 0,
+                "fehler": f"{type(err).__name__}: {err}".strip(": "),
+                "versuche": self._smart_fail_count,
+                "naechster_versuch": self._smart_retry_at.isoformat(),
+            }
+            _LOGGER.warning("Smart: could not stop the auto-started charge", exc_info=self._smart_fail_count == 1)
+            return
+        self._smart_count_command(now)
+        self._smart_autostart_handled = True
+        self._smart_fail_count = 0
+        self._smart_retry_at = None
+        self.smart_error = None
+        self.smart_action = "autostart_gestoppt"
+        _LOGGER.info("Smart: stopped a charge the car started by itself after plug-in")
 
     async def _smart_apply(
         self,
@@ -565,7 +626,7 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
 
         amps = decision["ampere"]
         switch_entity = self._config[CONF_CHARGE_SWITCH]
-        is_on = self._charge_switch_on()
+        is_on = self._smart_charge_active()
         try:
             if amps == 0:
                 if is_on:

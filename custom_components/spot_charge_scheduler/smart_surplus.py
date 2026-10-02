@@ -128,9 +128,13 @@ def decide(
     battery_soc: float,
     charging: bool,
     low_windows_before: int,
+    forced: bool = False,
 ) -> dict | None:
     """One decision. `amps` is the desired charging current (0 = no
-    charging). None when there isn't enough data yet."""
+    charging). None when there isn't enough data yet. `forced` marks a
+    decision triggered by plug-in / wallbox-mode change: there is no running
+    session worth "holding" at the minimum through a cloud, so anything
+    below the minimum current means stop right away."""
     means = window_means(samples, now)
     if means is None:
         return None
@@ -141,7 +145,7 @@ def decide(
     if raw >= MIN_AMPS:
         amps, low_windows, reason = raw, 0, "ueberschuss"
     else:
-        low_windows = low_windows_before + 1
+        low_windows = STOP_AFTER_LOW_WINDOWS if forced else low_windows_before + 1
         if charging and low_windows < STOP_AFTER_LOW_WINDOWS:
             amps, reason = MIN_AMPS, "unter_minimum_haelt"
         else:
