@@ -300,6 +300,7 @@ class _SmartBase(_BaseSensor):
         attrs["regler_aktiv"] = data.get("controller_mode") == "smart"
         attrs["letzte_aktion"] = data.get("smart_action")
         attrs["letzte_schnellkorrektur"] = data.get("smart_fast")
+        attrs["befehle_heute"] = data.get("smart_commands_today")
         attrs["steuerung_fehler"] = data.get("smart_error")
         attrs["eingaenge_vollstaendig"] = data.get("smart_inputs_ready")
         return attrs

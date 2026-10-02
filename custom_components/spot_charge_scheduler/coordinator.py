@@ -178,6 +178,10 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self._smart_last_bat_soc: float | None = None
         self.smart_fast: dict | None = None
         self._smart_backfilled = False
+        self._smart_last_wb_mode: str | None = None
+        # Vehicle-API commands sent by Smart per local day (Fleet API budget).
+        self._smart_cmd_date: str | None = None
+        self._smart_cmd_count = 0
 
     async def async_setup(self) -> None:
         await self.planner_state.async_load()
@@ -395,7 +399,8 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
 
         if self.smart_active:
             await self._smart_apply(now, plugged_in, is_home, current_soc, car_charge_limit)
-            await self._smart_fast_cycle(now, plugged_in, is_home)
+            if smart_surplus.FAST_LOOP_ENABLED:
+                await self._smart_fast_cycle(now, plugged_in, is_home)
         else:
             await self._actuate_switch(
                 plan, current_soc, target_soc, plugged_in, is_home, defer_for_data, now, target_dt
@@ -428,6 +433,9 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
             "smart_action": self.smart_action,
             "smart_error": self.smart_error,
             "smart_fast": self.smart_fast,
+            "smart_commands_today": (
+                self._smart_cmd_count if self._smart_cmd_date == now.date().isoformat() else 0
+            ),
             "smart_inputs_ready": smart_ready,
             "actuation_error": self.actuation_error,
             "last_decision": self.last_decision,
@@ -480,6 +488,16 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
 
         just_plugged = plugged_in is True and self._smart_last_plugged is not True
         self._smart_last_plugged = plugged_in
+        # A wallbox mode change (e.g. PV Power -> Normal Charge) also
+        # warrants an immediate decision: the 30-min buffer is always there.
+        mode_state = self.hass.states.get(cfg.get(CONF_PAUSE_MODE_SENSOR) or "")
+        wb_mode = mode_state.state if mode_state and mode_state.state not in ("unknown", "unavailable") else None
+        mode_changed = (
+            wb_mode is not None and self._smart_last_wb_mode is not None and wb_mode != self._smart_last_wb_mode
+        )
+        if wb_mode is not None:
+            self._smart_last_wb_mode = wb_mode
+        just_plugged = just_plugged or mode_changed
         slot = smart_surplus.decision_slot(now)
         if slot == self._smart_last_slot and not just_plugged:
             return True
@@ -496,6 +514,13 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self._smart_applied = False
         self._smart_retry_at = None
         return True
+
+    def _smart_count_command(self, now: datetime) -> None:
+        today = now.date().isoformat()
+        if self._smart_cmd_date != today:
+            self._smart_cmd_date = today
+            self._smart_cmd_count = 0
+        self._smart_cmd_count += 1
 
     def _charge_switch_on(self) -> bool:
         state = self.hass.states.get(self._config[CONF_CHARGE_SWITCH])
@@ -547,6 +572,7 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
                     await self.hass.services.async_call(
                         "switch", "turn_off", {"entity_id": switch_entity}, blocking=True
                     )
+                    self._smart_count_command(now)
                     self.smart_action = "gestoppt"
                 else:
                     self.smart_action = "bleibt_aus"
@@ -556,6 +582,7 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
                     await self.hass.services.async_call(
                         "number", "set_value", {"entity_id": current_entity, "value": amps}, blocking=True
                     )
+                    self._smart_count_command(now)
                     self.smart_action = f"ampere_auf_{amps}"
                 else:
                     self.smart_action = f"ampere_unveraendert_{amps}"
@@ -563,6 +590,7 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
                     await self.hass.services.async_call(
                         "switch", "turn_on", {"entity_id": switch_entity}, blocking=True
                     )
+                    self._smart_count_command(now)
                     self.smart_action += "_gestartet"
         except Exception as err:  # noqa: BLE001 - vehicle API hiccups must not crash the cycle
             self._smart_fail_count += 1

@@ -50,6 +50,11 @@ class Sample:
 
 
 # --- fast loop (every coordinator cycle, ~60 s) ---
+# Currently OFF: every correction is a vehicle-API command and the Tesla
+# Fleet API budget is limited (2026-10-02 replay: ~20 commands in 2.4 h with
+# the fast loop vs ~8 without). The 15-min decision plus an immediate
+# decision on plug-in / wallbox-mode change is used instead.
+FAST_LOOP_ENABLED = False
 # The 15-min/30-min decision is too slow once the wallbox stops regulating on
 # its own: a cloud front would drain the home battery (or import from the
 # grid) until the next decision. The fast loop watches the balance
