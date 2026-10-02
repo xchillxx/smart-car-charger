@@ -91,6 +91,34 @@ be added later behind the same `price_source.py` interface.
   yourself once you've switched your wallbox/car out of solar-surplus mode
   for the season.
 
+## Surplus-smart mode (`Regler`)
+
+The `Regler` select picks who drives the charge switch: **Preis-Optimiert**
+(the price planner above) or **Überschuss Smart**. Smart controls the car's
+charging current from PV surplus — and runs regardless of the wallbox mode,
+because the car-side current limit works below a wallbox's own PV mode too.
+
+- Every **15 minutes** it averages the last **30 minutes** of PV production
+  and house base load (house consumption minus the wallbox draw) and sets
+  the current so that nothing is fed into the grid while the home battery
+  keeps charging at a target rate that shrinks as it fills:
+  `(100 − battery SoC %) × 2 kW`, e.g. 1 kW at 50 %, 0.2 kW at 90 %.
+- Current is limited to **5–16 A** and only written when it changes. Below
+  5 A (≈ 3.45 kW on three phases) the car holds the minimum for one window
+  and **stops after two consecutive low windows**; it starts again as soon
+  as a window shows enough surplus.
+- Smart charges up to the car's own limit and ignores the cycle slots. It
+  only acts while `Lademodus aktiv` is on and the car is plugged in and
+  (if configured) at home. A manual change of the current between two
+  decisions is not overridden.
+- Needs four optional config entities: charging-current `number`, PV power,
+  house consumption (incl. wallbox) and home-battery SoC sensors, plus the
+  live charge-power sensor already used for calibration. `Smart Ampere` and
+  `Smart Soll-Leistung` show the latest decision (with the inputs as
+  attributes) in both modes, so it can be compared with reality before
+  switching over. The sample buffer is in memory: after an HA restart the
+  first decision waits ~10 minutes.
+
 ## Installation
 
 ### HACS (custom repository)
@@ -143,6 +171,8 @@ All fields are editable later via the integration's "Configure" option.
 | Ladeleistung | `number` | Charging power used for planning; auto-overwritten by the calibrator once a power sensor is set |
 | Billig-Schwelle (Perzentil) | `number` | How cheap (percentile of the last 8 days' observed prices, default 10) a slot must be before opportunistic top-up takes it; no effect without a car charge-limit entity |
 | Billig-Schwelle | `sensor` | What that percentile currently works out to, in ct/kWh, against the last 8 days — plus whether opportunistic top-up is active |
+| Regler | `select` | `Preis-Optimiert` or `Überschuss Smart` (see above) |
+| Smart Ampere / Smart Soll-Leistung | `sensor` | Latest surplus-smart decision (A / kW) with PV mean, base load, battery target, surplus, last action |
 | Lademodus aktiv | `switch` | Master switch — only while on does this integration touch the charge switch |
 | Ladeplan | `sensor` | Status (`kein_ziel`/`erreichbar`/`nicht_erreichbar`/`ziel_erreicht`/`opportunistisch`/`nicht_zuhause`/`wartet_auf_daten`) + attributes: active cycle, next slots, estimated cost, estimated completion, opportunistic-slot count, effective ceiling SoC, cheap-price threshold |
 | Nächster Zyklus | `sensor` | Timestamp of the currently active target occurrence |

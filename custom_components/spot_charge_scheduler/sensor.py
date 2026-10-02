@@ -27,6 +27,8 @@ async def async_setup_entry(
         CheapThresholdSensor(coordinator, entry),
         ExpensiveThresholdSensor(coordinator, entry),
         CombustionBreakEvenSensor(coordinator, entry),
+        SmartAmpsSensor(coordinator, entry),
+        SmartPowerSensor(coordinator, entry),
     ])
 
 
@@ -50,6 +52,7 @@ class ChargePlanSensor(_BaseSensor):
     _attr_options = [
         "kein_ziel", "ziel_erreicht", "opportunistisch", "nicht_zuhause",
         "wartet_auf_daten", "erreichbar", "nicht_erreichbar", "pausiert_pv_modus",
+        "smart_ueberschuss",
     ]
 
     def __init__(self, coordinator: SpotChargeCoordinator, entry: ConfigEntry) -> None:
@@ -59,6 +62,8 @@ class ChargePlanSensor(_BaseSensor):
     @property
     def native_value(self) -> str:
         plan = self.coordinator.data.get("plan") if self.coordinator.data else None
+        if self.coordinator.data and self.coordinator.data.get("controller_mode") == "smart":
+            return "smart_ueberschuss"
         if self.coordinator.data and self.coordinator.data.get("paused_by_mode"):
             return "pausiert_pv_modus"
         if plan is None or self.coordinator.data.get("target_datetime") is None:
@@ -281,3 +286,50 @@ class CombustionBreakEvenSensor(_BaseSensor):
             "spritpreis_quelle": c.get("fuel_price_source"),
             "kraftstoffart": c.get("fuel_type"),
         }
+
+
+class _SmartBase(_BaseSensor):
+    """Latest "Überschuss Smart" decision (see smart_surplus.py). Always
+    computed while the inputs are configured — also in "Preis-Optimiert" mode,
+    where it is only a recommendation to compare against what is happening."""
+
+    @property
+    def extra_state_attributes(self):
+        data = self.coordinator.data or {}
+        attrs = dict(data.get("smart_decision") or {})
+        attrs["regler_aktiv"] = data.get("controller_mode") == "smart"
+        attrs["letzte_aktion"] = data.get("smart_action")
+        attrs["steuerung_fehler"] = data.get("smart_error")
+        attrs["eingaenge_vollstaendig"] = data.get("smart_inputs_ready")
+        return attrs
+
+
+class SmartAmpsSensor(_SmartBase):
+    _attr_name = "Smart Ampere"
+    _attr_icon = "mdi:current-ac"
+    _attr_native_unit_of_measurement = "A"
+
+    def __init__(self, coordinator: SpotChargeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_smart_amps"
+
+    @property
+    def native_value(self) -> int | None:
+        d = (self.coordinator.data or {}).get("smart_decision")
+        return d["ampere"] if d else None
+
+
+class SmartPowerSensor(_SmartBase):
+    _attr_name = "Smart Soll-Leistung"
+    _attr_icon = "mdi:ev-station"
+    _attr_native_unit_of_measurement = "kW"
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator: SpotChargeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_smart_power"
+
+    @property
+    def native_value(self) -> float | None:
+        d = (self.coordinator.data or {}).get("smart_decision")
+        return d["soll_leistung_kw"] if d else None

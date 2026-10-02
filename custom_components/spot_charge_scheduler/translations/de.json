@@ -25,7 +25,11 @@
           "fuel_radius_km": "Suchradius für Tankstellen (km, um deinen Home-Assistant-Standort)",
           "odometer_entity": "Kilometerstand-Sensor (optional, km) — zusammen mit dem Ladeenergie-Sensor unten wird der EV-Verbrauch (kWh/100 km ab Steckdose) selbst kalibriert",
           "charge_energy_entity": "Kumulierter Ladeenergie-Sensor (optional, kWh ab Wallbox/Steckdose)",
-          "current_price_sensor_entity": "Live-Strompreis-Sensor (optional, €/kWh) — nur für den „günstiger jetzt\"-Vergleich, wenn gerade kein Ladeplan aktiv ist"
+          "current_price_sensor_entity": "Live-Strompreis-Sensor (optional, €/kWh) — nur für den „günstiger jetzt\"-Vergleich, wenn gerade kein Ladeplan aktiv ist",
+          "charge_current_entity": "Ladestrom-Entität (optional, number, A) — Stellgröße für „Überschuss Smart\" (z. B. Tesla-Ladestromstärke)",
+          "pv_power_sensor_entity": "PV-Leistung-Sensor (optional, kW) — für „Überschuss Smart\"",
+          "house_load_sensor_entity": "Hausverbrauch-Sensor inkl. Wallbox (optional, kW) — für „Überschuss Smart\"",
+          "home_battery_soc_sensor_entity": "Hausakku-Ladezustand (optional, %) — für „Überschuss Smart\""
         }
       }
     },
@@ -58,7 +62,11 @@
           "fuel_radius_km": "Suchradius für Tankstellen (km, um deinen Home-Assistant-Standort)",
           "odometer_entity": "Kilometerstand-Sensor (optional, km) — zusammen mit dem Ladeenergie-Sensor unten wird der EV-Verbrauch (kWh/100 km ab Steckdose) selbst kalibriert",
           "charge_energy_entity": "Kumulierter Ladeenergie-Sensor (optional, kWh ab Wallbox/Steckdose)",
-          "current_price_sensor_entity": "Live-Strompreis-Sensor (optional, €/kWh) — nur für den „günstiger jetzt\"-Vergleich, wenn gerade kein Ladeplan aktiv ist"
+          "current_price_sensor_entity": "Live-Strompreis-Sensor (optional, €/kWh) — nur für den „günstiger jetzt\"-Vergleich, wenn gerade kein Ladeplan aktiv ist",
+          "charge_current_entity": "Ladestrom-Entität (optional, number, A) — Stellgröße für „Überschuss Smart\" (z. B. Tesla-Ladestromstärke)",
+          "pv_power_sensor_entity": "PV-Leistung-Sensor (optional, kW) — für „Überschuss Smart\"",
+          "house_load_sensor_entity": "Hausverbrauch-Sensor inkl. Wallbox (optional, kW) — für „Überschuss Smart\"",
+          "home_battery_soc_sensor_entity": "Hausakku-Ladezustand (optional, %) — für „Überschuss Smart\""
         }
       }
     }
@@ -88,7 +96,8 @@
           "wartet_auf_daten": "Wartet auf Preisdaten",
           "erreichbar": "Plant günstige Slots",
           "nicht_erreichbar": "Zeit knapp – lädt durchgehend",
-          "pausiert_pv_modus": "Pausiert (PV-Modus)"
+          "pausiert_pv_modus": "Pausiert (PV-Modus)",
+          "smart_ueberschuss": "Überschuss Smart"
         }
       }
     }

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "spot_charge_scheduler"
-PLATFORMS = ["sensor", "number", "switch", "text", "time", "calendar"]
+PLATFORMS = ["sensor", "number", "switch", "select", "text", "time", "calendar"]
 
 UPDATE_INTERVAL_SECONDS = 60
 
@@ -81,6 +81,26 @@ CONF_CAR_CHARGE_LIMIT_ENTITY = "car_charge_limit_entity"
 CONF_PAUSE_MODE_SENSOR = "pause_mode_sensor_entity"
 CONF_PAUSE_MODE_VALUE = "pause_mode_value"
 DEFAULT_PAUSE_MODE_VALUE = "PV Power"
+# --- "Überschuss Smart" controller (all optional; needed only for that mode,
+# the recommendation sensors stay "unknown" without them) ---
+# number entity holding the car's charging current in A (e.g. the Tesla
+# Fleet "Ladestromstärke" number) — the setpoint this controller writes.
+CONF_CHARGE_CURRENT_ENTITY = "charge_current_entity"
+# Live PV production (kW), total house consumption INCLUDING the wallbox
+# (kW) and the home battery's state of charge (%). The wallbox draw itself is
+# taken from CONF_CHARGE_POWER_SENSOR and subtracted from the house load to
+# get the base load.
+CONF_PV_POWER_SENSOR = "pv_power_sensor_entity"
+CONF_HOUSE_LOAD_SENSOR = "house_load_sensor_entity"
+CONF_HOME_BATTERY_SOC_SENSOR = "home_battery_soc_sensor_entity"
+
+CONTROLLER_PRICE = "price"
+CONTROLLER_SMART = "smart"
+CONTROLLER_OPTIONS = {
+    CONTROLLER_PRICE: "Preis-Optimiert",
+    CONTROLLER_SMART: "Überschuss Smart",
+}
+
 CONF_PRICE_SOURCE = "price_source"
 CONF_TIBBER_HOME_NICKNAME = "tibber_home_nickname"
 CONF_BATTERY_CAPACITY_KWH_DEFAULT = "battery_capacity_kwh_default"

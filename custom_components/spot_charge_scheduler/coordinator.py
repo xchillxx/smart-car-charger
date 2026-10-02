@@ -18,6 +18,7 @@ from . import (
     price_baseline,
     readiness,
     schedule,
+    smart_surplus,
 )
 from .const import (
     CONF_BATTERY_CAPACITY_KWH_DEFAULT,
@@ -25,6 +26,7 @@ from .const import (
     CONF_PAUSE_MODE_SENSOR,
     CONF_PAUSE_MODE_VALUE,
     DEFAULT_PAUSE_MODE_VALUE,
+    CONF_CHARGE_CURRENT_ENTITY,
     CONF_CHARGE_ENERGY_ENTITY,
     CONF_CHARGE_POWER_KW,
     CONF_CHARGE_POWER_SENSOR,
@@ -34,10 +36,14 @@ from .const import (
     CONF_ENERGY_ADDED_SENSOR,
     CONF_FUEL_RADIUS_KM,
     CONF_FUEL_TYPE,
+    CONF_HOME_BATTERY_SOC_SENSOR,
     CONF_HOME_ZONE_ENTITY,
+    CONF_HOUSE_LOAD_SENSOR,
     CONF_LOCATION_TRACKER_ENTITY,
     CONF_ODOMETER_ENTITY,
     CONF_PLUGGED_IN_SENSOR,
+    CONF_PV_POWER_SENSOR,
+    CONTROLLER_SMART,
     CONF_PRICE_SOURCE,
     CONF_SOC_SENSOR,
     CONF_TANKERKOENIG_API_KEY,
@@ -71,6 +77,22 @@ def _get_float_state(hass: HomeAssistant, entity_id: str | None) -> float | None
         return float(state.state)
     except ValueError:
         return None
+
+
+def _get_power_kw(hass: HomeAssistant, entity_id: str | None) -> float | None:
+    """A power sensor's value in kW (converts W; other units assumed kW)."""
+    if not entity_id:
+        return None
+    state = hass.states.get(entity_id)
+    if state is None or state.state in ("unknown", "unavailable"):
+        return None
+    try:
+        value = float(state.state)
+    except ValueError:
+        return None
+    if state.attributes.get("unit_of_measurement") == "W":
+        value /= 1000.0
+    return value
 
 
 def _get_bool_state(hass: HomeAssistant, entity_id: str | None) -> bool | None:
@@ -137,6 +159,19 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self._act_retry_at: datetime | None = None
         self.actuation_error: dict | None = None
         self.last_decision: dict | None = None
+        # "Überschuss Smart" (see smart_surplus.py). Samples are kept in
+        # memory only — after a restart the first decision waits until
+        # MIN_WINDOW_COVERAGE_MINUTES of data exist again.
+        self._smart_samples: list[smart_surplus.Sample] = []
+        self._smart_last_slot: tuple | None = None
+        self._smart_low_windows = 0
+        self._smart_applied = True  # nothing pending until a decision exists
+        self._smart_retry_at: datetime | None = None
+        self._smart_fail_count = 0
+        self._smart_last_plugged: bool | None = None
+        self.smart_decision: dict | None = None
+        self.smart_action: str | None = None
+        self.smart_error: dict | None = None
 
     async def async_setup(self) -> None:
         await self.planner_state.async_load()
@@ -263,6 +298,18 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self.planner_state.async_save()
         await self.async_request_refresh()
 
+    async def async_set_controller_mode(self, mode: str) -> None:
+        self.planner_state.controller_mode = mode
+        self.planner_state.async_save()
+        if mode == CONTROLLER_SMART:
+            # Re-evaluate right away instead of waiting for the next quarter.
+            self._smart_last_slot = None
+        await self.async_request_refresh()
+
+    @property
+    def smart_active(self) -> bool:
+        return self.planner_state.controller_mode == CONTROLLER_SMART
+
     async def async_set_master_switch(self, value: bool) -> None:
         self.planner_state.master_switch_on = value
         self.planner_state.async_save()
@@ -296,6 +343,8 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         is_home = _get_is_home(
             self.hass, self._config.get(CONF_LOCATION_TRACKER_ENTITY), self._config.get(CONF_HOME_ZONE_ENTITY)
         )
+
+        smart_ready = self._smart_cycle_inputs(now, is_charging, plugged_in)
 
         if is_charging is not None:
             capacity_estimator.process_charging_edge(
@@ -337,9 +386,12 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
 
         defer_for_data = self._should_defer_for_data(now, target_dt, plan)
 
-        await self._actuate_switch(
-            plan, current_soc, target_soc, plugged_in, is_home, defer_for_data, now, target_dt
-        )
+        if self.smart_active:
+            await self._smart_apply(now, plugged_in, is_home, current_soc, car_charge_limit)
+        else:
+            await self._actuate_switch(
+                plan, current_soc, target_soc, plugged_in, is_home, defer_for_data, now, target_dt
+            )
 
         await self._maybe_fetch_fuel_price(now)
         await self._maybe_recalc_ev_consumption(now)
@@ -362,12 +414,150 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
             "charge_power_kw": self.planner_state.charge_power_kw,
             "power_sample_count": len(self.planner_state.power_samples),
             "master_switch_on": self.planner_state.master_switch_on,
-            "paused_by_mode": self.is_paused_by_mode(),
+            "paused_by_mode": self.is_paused_by_mode() and not self.smart_active,
+            "controller_mode": self.planner_state.controller_mode,
+            "smart_decision": self.smart_decision,
+            "smart_action": self.smart_action,
+            "smart_error": self.smart_error,
+            "smart_inputs_ready": smart_ready,
             "actuation_error": self.actuation_error,
             "last_decision": self.last_decision,
             "plan": plan,
             "combustion": combustion,
         }
+
+    # --- "Überschuss Smart" ---
+
+    def _smart_cycle_inputs(
+        self, now: datetime, is_charging: bool | None, plugged_in: bool | None
+    ) -> bool:
+        """Record one PV/base-load sample and, once per wall-clock quarter
+        hour (or right after the car gets plugged in), take a new decision.
+        Runs in both controller modes so the recommendation sensors can be
+        compared with reality before switching to Smart; only
+        _smart_apply ever writes to the car. Returns False when a needed
+        input sensor isn't configured / readable."""
+        cfg = self._config
+        pv = _get_power_kw(self.hass, cfg.get(CONF_PV_POWER_SENSOR))
+        load = _get_power_kw(self.hass, cfg.get(CONF_HOUSE_LOAD_SENSOR))
+        bat_soc = _get_float_state(self.hass, cfg.get(CONF_HOME_BATTERY_SOC_SENSOR))
+        wallbox = _get_power_kw(self.hass, cfg.get(CONF_CHARGE_POWER_SENSOR))
+        if wallbox is None and is_charging is False:
+            wallbox = 0.0  # a sleeping car's power sensor can read unavailable
+        if pv is None or load is None or bat_soc is None or wallbox is None:
+            return False
+
+        self._smart_samples = smart_surplus.add_sample(
+            self._smart_samples, smart_surplus.Sample(now, pv, load - wallbox)
+        )
+
+        just_plugged = plugged_in is True and self._smart_last_plugged is not True
+        self._smart_last_plugged = plugged_in
+        slot = smart_surplus.decision_slot(now)
+        if slot == self._smart_last_slot and not just_plugged:
+            return True
+
+        charging_now = self._charge_switch_on()
+        decision = smart_surplus.decide(
+            self._smart_samples, now, bat_soc, charging_now, self._smart_low_windows
+        )
+        if decision is None:
+            return True  # not enough data yet; retried next cycle
+        self._smart_last_slot = slot
+        self._smart_low_windows = decision["fenster_unter_minimum"]
+        self.smart_decision = decision
+        self._smart_applied = False
+        self._smart_retry_at = None
+        return True
+
+    def _charge_switch_on(self) -> bool:
+        state = self.hass.states.get(self._config[CONF_CHARGE_SWITCH])
+        return state is not None and state.state == "on"
+
+    async def _smart_apply(
+        self,
+        now: datetime,
+        plugged_in: bool | None,
+        is_home: bool | None,
+        current_soc: float | None,
+        car_charge_limit: float | None,
+    ) -> None:
+        """Carry out the latest Smart decision ONCE (a manual change of the
+        current between two decisions is therefore never fought), retrying
+        with backoff if the vehicle API fails."""
+        decision = self.smart_decision
+        if decision is None or self._smart_applied:
+            return
+        if not self.planner_state.master_switch_on:
+            self.smart_action = "master_aus"
+            return
+        if self._smart_retry_at is not None and now < self._smart_retry_at:
+            return
+        if plugged_in is False or is_home is False:
+            self._smart_applied = True
+            self.smart_action = "nicht_angesteckt" if plugged_in is False else "nicht_zuhause"
+            return
+        if (
+            car_charge_limit is not None
+            and current_soc is not None
+            and current_soc >= car_charge_limit
+        ):
+            self._smart_applied = True
+            self.smart_action = "ladelimit_erreicht"
+            return
+        current_entity = self._config.get(CONF_CHARGE_CURRENT_ENTITY)
+        if not current_entity:
+            self._smart_applied = True
+            self.smart_action = "keine_ladestrom_entitaet"
+            return
+
+        amps = decision["ampere"]
+        switch_entity = self._config[CONF_CHARGE_SWITCH]
+        is_on = self._charge_switch_on()
+        try:
+            if amps == 0:
+                if is_on:
+                    await self.hass.services.async_call(
+                        "switch", "turn_off", {"entity_id": switch_entity}, blocking=True
+                    )
+                    self.smart_action = "gestoppt"
+                else:
+                    self.smart_action = "bleibt_aus"
+            else:
+                current = _get_float_state(self.hass, current_entity)
+                if current is None or round(current) != amps:
+                    await self.hass.services.async_call(
+                        "number", "set_value", {"entity_id": current_entity, "value": amps}, blocking=True
+                    )
+                    self.smart_action = f"ampere_auf_{amps}"
+                else:
+                    self.smart_action = f"ampere_unveraendert_{amps}"
+                if not is_on:
+                    await self.hass.services.async_call(
+                        "switch", "turn_on", {"entity_id": switch_entity}, blocking=True
+                    )
+                    self.smart_action += "_gestartet"
+        except Exception as err:  # noqa: BLE001 - vehicle API hiccups must not crash the cycle
+            self._smart_fail_count += 1
+            delay = (1, 2, 5, 10)[min(self._smart_fail_count, 4) - 1]
+            self._smart_retry_at = now + timedelta(minutes=delay)
+            self.smart_error = {
+                "zeit": now.isoformat(),
+                "ziel_ampere": amps,
+                "fehler": f"{type(err).__name__}: {err}".strip(": "),
+                "versuche": self._smart_fail_count,
+                "naechster_versuch": self._smart_retry_at.isoformat(),
+            }
+            _LOGGER.warning(
+                "Smart: could not apply %s A (attempt %d); retrying in %d min",
+                amps, self._smart_fail_count, delay, exc_info=self._smart_fail_count == 1,
+            )
+            return
+        _LOGGER.info("Smart: %s (decision %s)", self.smart_action, decision)
+        self._smart_applied = True
+        self._smart_fail_count = 0
+        self._smart_retry_at = None
+        self.smart_error = None
 
     # --- combustion-engine comparison ---
 

@@ -35,6 +35,7 @@ from .const import (
     DEFAULT_SLOT_RHYTHM_DAYS,
     DEFAULT_SLOT_TARGET_SOC,
     DEFAULT_SLOT_TIME,
+    CONTROLLER_PRICE,
     MAX_CALIBRATION_SAMPLES,
     MIN_CALIBRATION_SAMPLES_TO_TRUST,
     NUM_CYCLE_SLOTS,
@@ -151,6 +152,9 @@ class PlannerState:
         # configured (see FuelPriceNumber / _maybe_fetch_fuel_price).
         self.fuel_price_eur_l: float = DEFAULT_FUEL_PRICE_EUR_L
         self.master_switch_on: bool = False
+        # Which controller drives the charge switch: "price" (planner) or
+        # "smart" (PV-surplus current control, see smart_surplus.py).
+        self.controller_mode: str = CONTROLLER_PRICE
         # Charge-session edge tracking for capacity/power calibration (see
         # capacity_estimator.py) — None/empty when no session is open.
         self.session_start_soc: float | None = None
@@ -203,6 +207,7 @@ class PlannerState:
             data.get("fuel_price_manual_eur_l", DEFAULT_FUEL_PRICE_EUR_L),
         )
         self.master_switch_on = data.get("master_switch_on", False)
+        self.controller_mode = data.get("controller_mode", CONTROLLER_PRICE)
         self.session_start_soc = data.get("session_start_soc")
         self.session_start_energy_added = data.get("session_start_energy_added")
         self.session_power_readings = data.get("session_power_readings", [])
@@ -261,6 +266,7 @@ class PlannerState:
             "ev_consumption_kwh_100km": self.ev_consumption_kwh_100km,
             "fuel_price_eur_l": self.fuel_price_eur_l,
             "master_switch_on": self.master_switch_on,
+            "controller_mode": self.controller_mode,
             "session_start_soc": self.session_start_soc,
             "session_start_energy_added": self.session_start_energy_added,
             "session_power_readings": self.session_power_readings,

@@ -15,6 +15,7 @@ from .const import (
     CONF_PAUSE_MODE_SENSOR,
     CONF_PAUSE_MODE_VALUE,
     DEFAULT_PAUSE_MODE_VALUE,
+    CONF_CHARGE_CURRENT_ENTITY,
     CONF_CHARGE_ENERGY_ENTITY,
     CONF_CHARGE_POWER_KW,
     CONF_CHARGE_POWER_SENSOR,
@@ -24,10 +25,13 @@ from .const import (
     CONF_ENERGY_ADDED_SENSOR,
     CONF_FUEL_RADIUS_KM,
     CONF_FUEL_TYPE,
+    CONF_HOME_BATTERY_SOC_SENSOR,
     CONF_HOME_ZONE_ENTITY,
+    CONF_HOUSE_LOAD_SENSOR,
     CONF_LOCATION_TRACKER_ENTITY,
     CONF_ODOMETER_ENTITY,
     CONF_PLUGGED_IN_SENSOR,
+    CONF_PV_POWER_SENSOR,
     CONF_PRICE_SOURCE,
     CONF_SOC_SENSOR,
     CONF_TANKERKOENIG_API_KEY,
@@ -102,6 +106,19 @@ def _schema(defaults: dict | None = None) -> vol.Schema:
         ): selector.NumberSelector(
             selector.NumberSelectorConfig(min=1, max=200, step=0.1, unit_of_measurement="kWh")
         ),
+        # --- "Überschuss Smart" controller (all optional) ---
+        vol.Optional(
+            CONF_CHARGE_CURRENT_ENTITY, **_default(d, CONF_CHARGE_CURRENT_ENTITY)
+        ): selector.EntitySelector(selector.EntitySelectorConfig(domain="number")),
+        vol.Optional(
+            CONF_PV_POWER_SENSOR, **_default(d, CONF_PV_POWER_SENSOR)
+        ): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+        vol.Optional(
+            CONF_HOUSE_LOAD_SENSOR, **_default(d, CONF_HOUSE_LOAD_SENSOR)
+        ): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+        vol.Optional(
+            CONF_HOME_BATTERY_SOC_SENSOR, **_default(d, CONF_HOME_BATTERY_SOC_SENSOR)
+        ): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
         # --- combustion-engine comparison (all optional) ---
         vol.Optional(
             CONF_TANKERKOENIG_API_KEY, **_default(d, CONF_TANKERKOENIG_API_KEY)
