@@ -8,10 +8,10 @@
     "@xchillxx"
   ],
   "config_flow": true,
-  "documentation": "https://github.com/xchillxx/spot-charge-scheduler",
+  "documentation": "https://github.com/xchillxx/smart-car-charger",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/xchillxx/spot-charge-scheduler/issues",
+  "issue_tracker": "https://github.com/xchillxx/smart-car-charger/issues",
   "requirements": [],
   "version": "0.21.2"
 }
