@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 256">
   <rect width="780" height="256" rx="24" fill="#1a3a5c"/>
   <path d="M100 60 L48 148 H84 L76 200 L134 108 H98 Z" fill="#4fd1c5"/>
-  <text x="170" y="150" font-family="Helvetica, Arial, sans-serif" font-size="52" fill="#ffffff">Spot Charge Scheduler</text>
+  <text x="170" y="150" font-family="Helvetica, Arial, sans-serif" font-size="52" fill="#ffffff">Smart Car Charger</text>
 </svg>

@@ -153,7 +153,7 @@ class SpotChargeConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input: dict | None = None):
         errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(title="Spot Charge Scheduler", data=user_input)
+            return self.async_create_entry(title="Smart Car Charger", data=user_input)
         return self.async_show_form(step_id="user", data_schema=_schema(), errors=errors)
 
     @staticmethod

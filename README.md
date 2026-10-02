@@ -1,7 +1,12 @@
-# Spot Charge Scheduler
+# Smart Car Charger
 
-Home Assistant custom integration for price-optimized EV charging with a
-target SoC/time and a repeating cycle — e.g. "65% charged by 04:30, every
+Home Assistant custom integration that charges an EV in one of two ways,
+selectable at any time (`Regler`): **price-optimized** (cheapest Tibber
+slots up to a target) or **surplus smart** (PV-surplus current control that
+keeps the home battery from discharging — see below). *(Formerly "Spot
+Charge Scheduler"; the integration domain and entity IDs are unchanged.)*
+
+The price-optimized mode works with a target SoC/time and a repeating cycle — e.g. "65% charged by 04:30, every
 4 days" for a shift schedule. Picks the cheapest 15-minute price slots that
 still meet the deadline; if time runs out, it automatically shifts to
 charging every remaining slot so the deadline is still met, price be damned.
@@ -107,6 +112,16 @@ because the car-side current limit works below a wallbox's own PV mode too.
   5 A (≈ 3.45 kW on three phases) the car holds the minimum for one window
   and **stops after two consecutive low windows**; it starts again as soon
   as a window shows enough surplus.
+- A **fast loop** runs every minute while the car charges: it compares the
+  last 3 minutes of `PV − house load` with the battery target and cuts the
+  current **immediately** when the battery would discharge or the grid
+  would be used (down to the 5 A minimum, then stop); it raises the current
+  only after 5 minutes of clear surplus (> 1 kW). The 15-minute decision is
+  capped by the last 5 minutes so it can't undo a brake. This is what makes
+  it safe to leave the wallbox unregulated (e.g. fixed 11 kW) and let this
+  integration be the only controller.
+- The sample buffer is rebuilt from the recorder history after a restart, so
+  decisions don't wait for fresh data.
 - Smart charges up to the car's own limit and ignores the cycle slots. It
   only acts while `Lademodus aktiv` is on and the car is plugged in and
   (if configured) at home. A manual change of the current between two
@@ -116,22 +131,21 @@ because the car-side current limit works below a wallbox's own PV mode too.
   live charge-power sensor already used for calibration. `Smart Ampere` and
   `Smart Soll-Leistung` show the latest decision (with the inputs as
   attributes) in both modes, so it can be compared with reality before
-  switching over. The sample buffer is in memory: after an HA restart the
-  first decision waits ~10 minutes.
+  switching over.
 
 ## Installation
 
 ### HACS (custom repository)
 1. HACS → Integrations → ⋮ → Custom repositories
 2. Add this repository URL, category "Integration"
-3. Install "Spot Charge Scheduler", restart Home Assistant
+3. Install "Smart Car Charger", restart Home Assistant
 
 ### Manual
 Copy `custom_components/spot_charge_scheduler` into your `config/custom_components/` folder and restart.
 
 ## Setup
 
-Settings → Devices & Services → Add Integration → "Spot Charge Scheduler". You'll be asked for:
+Settings → Devices & Services → Add Integration → "Smart Car Charger". You'll be asked for:
 
 | Field | Required | Notes |
 |---|---|---|

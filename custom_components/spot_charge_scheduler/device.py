@@ -8,5 +8,5 @@ from .const import DOMAIN
 def hub_device_info(entry_id: str) -> dict:
     return {
         "identifiers": {(DOMAIN, entry_id)},
-        "name": "Spot Charge Scheduler",
+        "name": "Smart Car Charger",
     }

@@ -1,4 +1,4 @@
-"""Constants for Spot Charge Scheduler."""
+"""Constants for Smart Car Charger."""
 from __future__ import annotations
 
 DOMAIN = "spot_charge_scheduler"

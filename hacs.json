@@ -1,5 +1,5 @@
 {
-  "name": "Spot Charge Scheduler",
+  "name": "Smart Car Charger",
   "content_in_root": false,
   "homeassistant": "2024.8.0",
   "filename": "spot_charge_scheduler.zip"

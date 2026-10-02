@@ -1,6 +1,6 @@
 {
   "domain": "spot_charge_scheduler",
-  "name": "Spot Charge Scheduler",
+  "name": "Smart Car Charger",
   "after_dependencies": [
     "recorder"
   ],
@@ -13,5 +13,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/xchillxx/spot-charge-scheduler/issues",
   "requirements": [],
-  "version": "0.20.0"
+  "version": "0.21.0"
 }

@@ -18,6 +18,7 @@ from . import (
     price_baseline,
     readiness,
     schedule,
+    smart_history,
     smart_surplus,
 )
 from .const import (
@@ -172,6 +173,11 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self.smart_decision: dict | None = None
         self.smart_action: str | None = None
         self.smart_error: dict | None = None
+        self._smart_last_change: datetime | None = None
+        self._smart_last_wallbox_kw: float = 0.0
+        self._smart_last_bat_soc: float | None = None
+        self.smart_fast: dict | None = None
+        self._smart_backfilled = False
 
     async def async_setup(self) -> None:
         await self.planner_state.async_load()
@@ -344,6 +350,7 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
             self.hass, self._config.get(CONF_LOCATION_TRACKER_ENTITY), self._config.get(CONF_HOME_ZONE_ENTITY)
         )
 
+        await self._smart_backfill_once(now)
         smart_ready = self._smart_cycle_inputs(now, is_charging, plugged_in)
 
         if is_charging is not None:
@@ -388,6 +395,7 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
 
         if self.smart_active:
             await self._smart_apply(now, plugged_in, is_home, current_soc, car_charge_limit)
+            await self._smart_fast_cycle(now, plugged_in, is_home)
         else:
             await self._actuate_switch(
                 plan, current_soc, target_soc, plugged_in, is_home, defer_for_data, now, target_dt
@@ -419,6 +427,7 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
             "smart_decision": self.smart_decision,
             "smart_action": self.smart_action,
             "smart_error": self.smart_error,
+            "smart_fast": self.smart_fast,
             "smart_inputs_ready": smart_ready,
             "actuation_error": self.actuation_error,
             "last_decision": self.last_decision,
@@ -427,6 +436,22 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         }
 
     # --- "Überschuss Smart" ---
+
+    async def _smart_backfill_once(self, now: datetime) -> None:
+        """After a restart, rebuild the 30-min sample buffer from the
+        recorder once, so decisions don't wait for fresh sampling."""
+        if self._smart_backfilled:
+            return
+        self._smart_backfilled = True
+        pv_entity = self._config.get(CONF_PV_POWER_SENSOR)
+        load_entity = self._config.get(CONF_HOUSE_LOAD_SENSOR)
+        if not pv_entity or not load_entity:
+            return
+        history = await smart_history.async_backfill(
+            self.hass, pv_entity, load_entity, self._config.get(CONF_CHARGE_POWER_SENSOR), now
+        )
+        if history and not self._smart_samples:
+            self._smart_samples = history
 
     def _smart_cycle_inputs(
         self, now: datetime, is_charging: bool | None, plugged_in: bool | None
@@ -448,8 +473,10 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
             return False
 
         self._smart_samples = smart_surplus.add_sample(
-            self._smart_samples, smart_surplus.Sample(now, pv, load - wallbox)
+            self._smart_samples, smart_surplus.Sample(now, pv, load - wallbox, wallbox)
         )
+        self._smart_last_wallbox_kw = wallbox
+        self._smart_last_bat_soc = bat_soc
 
         just_plugged = plugged_in is True and self._smart_last_plugged is not True
         self._smart_last_plugged = plugged_in
@@ -554,10 +581,70 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
             )
             return
         _LOGGER.info("Smart: %s (decision %s)", self.smart_action, decision)
+        if self.smart_action and "unveraendert" not in self.smart_action and self.smart_action != "bleibt_aus":
+            self._smart_last_change = now
         self._smart_applied = True
         self._smart_fail_count = 0
         self._smart_retry_at = None
         self.smart_error = None
+
+    async def _smart_fast_cycle(
+        self, now: datetime, plugged_in: bool | None, is_home: bool | None
+    ) -> None:
+        """Per-cycle fast correction (see smart_surplus.fast_adjust). Skipped
+        while a slow decision is still pending/retrying, without master
+        switch, or when the car isn't charging. The current actually drawn is
+        derived from the live wallbox power, not from the (slowly polled)
+        current entity."""
+        if not self._smart_applied or not self.planner_state.master_switch_on:
+            return
+        if plugged_in is False or is_home is False:
+            return
+        if self._smart_retry_at is not None and now < self._smart_retry_at:
+            return
+        current_entity = self._config.get(CONF_CHARGE_CURRENT_ENTITY)
+        if not current_entity or self._smart_last_bat_soc is None or not self._charge_switch_on():
+            return
+        drawn_amps = round(self._smart_last_wallbox_kw * 1000.0 / (smart_surplus.VOLTAGE * smart_surplus.PHASES))
+        if drawn_amps < 1:
+            return
+        adj = smart_surplus.fast_adjust(
+            self._smart_samples, now, self._smart_last_bat_soc, drawn_amps, self._smart_last_change
+        )
+        if adj is None:
+            return
+        new = adj["amps"]
+        try:
+            if new == 0:
+                await self.hass.services.async_call(
+                    "switch", "turn_off", {"entity_id": self._config[CONF_CHARGE_SWITCH]}, blocking=True
+                )
+            else:
+                await self.hass.services.async_call(
+                    "number", "set_value", {"entity_id": current_entity, "value": new}, blocking=True
+                )
+        except Exception as err:  # noqa: BLE001
+            self._smart_fail_count += 1
+            delay = (1, 2, 5, 10)[min(self._smart_fail_count, 4) - 1]
+            self._smart_retry_at = now + timedelta(minutes=delay)
+            self.smart_error = {
+                "zeit": now.isoformat(), "ziel_ampere": new,
+                "fehler": f"{type(err).__name__}: {err}".strip(": "),
+                "versuche": self._smart_fail_count,
+                "naechster_versuch": self._smart_retry_at.isoformat(),
+            }
+            _LOGGER.warning("Smart fast: could not apply %s A", new, exc_info=self._smart_fail_count == 1)
+            return
+        self._smart_last_change = now
+        self._smart_fail_count = 0
+        self._smart_retry_at = None
+        self.smart_error = None
+        self.smart_fast = {
+            "zeit": now.isoformat(), "von_ampere": drawn_amps, "auf_ampere": new,
+            "grund": adj["grund"], "bilanz_kw": adj["bilanz_kw"],
+        }
+        self.smart_action = f"{adj['grund']}_{drawn_amps}_auf_{new}"
+        _LOGGER.info("Smart fast: %s A -> %s A (%s, balance %s kW)", drawn_amps, new, adj["grund"], adj["bilanz_kw"])
 
     # --- combustion-engine comparison ---
 

@@ -1,4 +1,4 @@
-"""Spot Charge Scheduler — Home Assistant custom integration."""
+"""Smart Car Charger — Home Assistant custom integration."""
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry

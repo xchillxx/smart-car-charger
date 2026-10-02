@@ -101,7 +101,7 @@ def _migrate_from_cycles(old_cycles: list[dict[str, Any]]) -> list[dict[str, Any
             "anchor": cycle.get("anchor"),
         }
     _LOGGER.info(
-        "Spot Charge Scheduler: migrated %d recurring cycle(s) into slots", len(recurring[:NUM_CYCLE_SLOTS])
+        "Smart Car Charger: migrated %d recurring cycle(s) into slots", len(recurring[:NUM_CYCLE_SLOTS])
     )
     return slots
 

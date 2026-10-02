@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Set up Spot Charge Scheduler",
+        "title": "Set up Smart Car Charger",
         "description": "Pick the entities that control/report your vehicle's charging.",
         "data": {
           "charge_switch_entity": "Charge start/stop switch",
@@ -40,7 +40,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Spot Charge Scheduler options",
+        "title": "Smart Car Charger options",
         "data": {
           "charge_switch_entity": "Charge start/stop switch",
           "soc_sensor_entity": "State of charge sensor (%)",

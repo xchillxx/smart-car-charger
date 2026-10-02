@@ -45,7 +45,28 @@ MIN_BASE_LOAD_KW = 0.2
 class Sample:
     ts: datetime
     pv_kw: float
-    base_kw: float  # house load WITHOUT the wallbox
+    base_kw: float  # house load WITHOUT the wallbox (raw, not floored)
+    wallbox_kw: float = 0.0  # what the car is drawing right now
+
+
+# --- fast loop (every coordinator cycle, ~60 s) ---
+# The 15-min/30-min decision is too slow once the wallbox stops regulating on
+# its own: a cloud front would drain the home battery (or import from the
+# grid) until the next decision. The fast loop watches the balance
+# PV − house load − battery target over a few minutes and corrects the
+# current — quickly DOWN, patiently UP.
+FAST_DOWN_WINDOW_MINUTES = 3
+FAST_DOWN_MIN_SAMPLES = 2
+FAST_DOWN_DEADBAND_KW = 0.3
+FAST_UP_WINDOW_MINUTES = 5
+FAST_UP_MIN_SAMPLES = 4
+FAST_UP_THRESHOLD_KW = 1.0
+# After the current was changed, ignore this long (the car and the load
+# readings need to settle) and only judge samples taken afterwards.
+SETTLE_SECONDS = 60
+# The slow decision may not exceed what the last few minutes support.
+SHORT_CAP_WINDOW_MINUTES = 5
+SHORT_CAP_MIN_SAMPLES = 3
 
 
 def amps_to_kw(amps: float) -> float:
@@ -107,7 +128,16 @@ def decide(
     pv, base, coverage = means
     target = battery_target_kw(battery_soc)
     surplus = pv - base - target
-    raw = max(0, min(MAX_AMPS, math.floor(surplus * 1000.0 / (VOLTAGE * PHASES))))
+    raw_slow = max(0, min(MAX_AMPS, math.floor(surplus * 1000.0 / (VOLTAGE * PHASES))))
+    # Never promise more than the last few minutes support (otherwise a slow
+    # decision would undo the fast brake right after a cloud arrived).
+    short = [s for s in samples if s.ts > now - timedelta(minutes=SHORT_CAP_WINDOW_MINUTES)]
+    raw = raw_slow
+    if len(short) >= SHORT_CAP_MIN_SAMPLES:
+        s_pv = sum(x.pv_kw for x in short) / len(short)
+        s_base = sum(max(x.base_kw, MIN_BASE_LOAD_KW) for x in short) / len(short)
+        raw_short = max(0, min(MAX_AMPS, math.floor((s_pv - s_base - target) * 1000.0 / (VOLTAGE * PHASES))))
+        raw = min(raw_slow, raw_short)
     if raw >= MIN_AMPS:
         amps, low_windows, reason = raw, 0, "ueberschuss"
     else:
@@ -124,9 +154,66 @@ def decide(
         "akku_ziel_kw": round(target, 2),
         "ueberschuss_kw": round(surplus, 2),
         "ampere_roh": raw,
+        "ampere_roh_30min": raw_slow,
         "ampere": amps,
         "soll_leistung_kw": round(amps_to_kw(amps), 2),
         "fenster_unter_minimum": low_windows,
         "grund": reason,
         "abgedeckt_min": round(coverage, 1),
     }
+
+
+def fast_adjust(
+    samples: list[Sample],
+    now: datetime,
+    battery_soc: float,
+    current_amps: int,
+    last_change: datetime | None,
+) -> dict | None:
+    """Fast correction of the CURRENT charging current while the car charges.
+    Returns {"amps": new, "grund", "bilanz_kw", ...} or None (no change).
+    new == 0 means stop. `current_amps` is what the car actually draws."""
+    if current_amps <= 0:
+        return None
+    settled_from = (
+        last_change + timedelta(seconds=SETTLE_SECONDS) if last_change is not None else None
+    )
+
+    def window(minutes: int) -> list[Sample]:
+        start = now - timedelta(minutes=minutes)
+        if settled_from is not None and settled_from > start:
+            start = settled_from
+        return [s for s in samples if s.ts > start]
+
+    def balance(win: list[Sample]) -> float:
+        # PV − house load (= base + wallbox): what the battery + grid absorb
+        return sum(s.pv_kw - s.base_kw - s.wallbox_kw for s in win) / len(win)
+
+    target = battery_target_kw(battery_soc)
+    kw_per_amp = amps_to_kw(1)
+
+    down = window(FAST_DOWN_WINDOW_MINUTES)
+    if len(down) >= FAST_DOWN_MIN_SAMPLES:
+        err = balance(down) - target
+        if err < -FAST_DOWN_DEADBAND_KW:
+            new = current_amps - math.ceil(-err / kw_per_amp)
+            if new < MIN_AMPS:
+                # still short of power at the minimum -> stop; first step
+                # down to the minimum otherwise
+                new = MIN_AMPS if current_amps > MIN_AMPS else 0
+            return {
+                "amps": new, "grund": "schnell_runter",
+                "bilanz_kw": round(err, 2), "fenster_samples": len(down),
+            }
+
+    up = window(FAST_UP_WINDOW_MINUTES)
+    if len(up) >= FAST_UP_MIN_SAMPLES and current_amps < MAX_AMPS:
+        err = balance(up) - target
+        if err > FAST_UP_THRESHOLD_KW:
+            new = min(MAX_AMPS, current_amps + max(1, math.floor(err / kw_per_amp)))
+            if new != current_amps:
+                return {
+                    "amps": new, "grund": "schnell_hoch",
+                    "bilanz_kw": round(err, 2), "fenster_samples": len(up),
+                }
+    return None
