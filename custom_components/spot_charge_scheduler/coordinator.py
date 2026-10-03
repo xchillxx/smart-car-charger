@@ -315,6 +315,31 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self.planner_state.async_save()
         await self.async_request_refresh()
 
+    async def async_set_home_battery_capacity_kwh(self, value: float) -> None:
+        self.planner_state.home_battery_capacity_kwh = value
+        self.planner_state.async_save()
+        self._smart_last_slot = None  # decide again with the new value
+        await self.async_request_refresh()
+
+    async def async_set_pv_end_before_sunset_h(self, value: float) -> None:
+        self.planner_state.pv_end_before_sunset_h = value
+        self.planner_state.async_save()
+        self._smart_last_slot = None
+        await self.async_request_refresh()
+
+    def _hours_until_pv_end(self, now: datetime) -> float | None:
+        """Hours until PV stops being useful: the next sunset minus the
+        configured margin (None when the sun entity or its attribute is not
+        readable). After sunset `next_setting` is tomorrow's, so the value is
+        large — fine, there is no PV left to share then."""
+        sun = self.hass.states.get("sun.sun")
+        raw = sun.attributes.get("next_setting") if sun is not None else None
+        setting = dt_util.parse_datetime(raw) if isinstance(raw, str) else None
+        if setting is None:
+            return None
+        pv_end = setting - timedelta(hours=self.planner_state.pv_end_before_sunset_h)
+        return (pv_end - now).total_seconds() / 3600.0
+
     async def async_set_controller_mode(self, mode: str) -> None:
         self.planner_state.controller_mode = mode
         self.planner_state.async_save()
@@ -517,11 +542,22 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         # Live TeslaMate "is charging" beats the slowly polled Fleet switch:
         # a car that starts charging by itself on plug-in must be seen at once.
         charging_now = is_charging if is_charging is not None else self._charge_switch_on()
+        hours_left = self._hours_until_pv_end(now)
+        battery_target = (
+            smart_surplus.battery_target_deadline_kw(
+                bat_soc, self.planner_state.home_battery_capacity_kwh, hours_left
+            )
+            if hours_left is not None
+            else None
+        )
         decision = smart_surplus.decide(
-            self._smart_samples, now, bat_soc, charging_now, self._smart_low_windows, forced
+            self._smart_samples, now, bat_soc, charging_now, self._smart_low_windows, forced,
+            battery_target,
         )
         if decision is None:
             return True  # not enough data yet; retried next cycle
+        decision["akku_ziel_modus"] = "frist" if battery_target is not None else "linear"
+        decision["stunden_bis_pv_ende"] = round(hours_left, 2) if hours_left is not None else None
         if forced:
             self._smart_forced_at = now
             self._smart_autostart_handled = False

@@ -152,6 +152,10 @@ class PlannerState:
         # configured (see FuelPriceNumber / _maybe_fetch_fuel_price).
         self.fuel_price_eur_l: float = DEFAULT_FUEL_PRICE_EUR_L
         self.master_switch_on: bool = False
+        # "Überschuss Smart", battery-first target: the home battery's usable
+        # capacity and how long before sunset PV stops being useful.
+        self.home_battery_capacity_kwh: float = 14.0
+        self.pv_end_before_sunset_h: float = 1.5
         # Which controller drives the charge switch: "price" (planner) or
         # "smart" (PV-surplus current control, see smart_surplus.py).
         self.controller_mode: str = CONTROLLER_PRICE
@@ -207,6 +211,8 @@ class PlannerState:
             data.get("fuel_price_manual_eur_l", DEFAULT_FUEL_PRICE_EUR_L),
         )
         self.master_switch_on = data.get("master_switch_on", False)
+        self.home_battery_capacity_kwh = data.get("home_battery_capacity_kwh", 14.0)
+        self.pv_end_before_sunset_h = data.get("pv_end_before_sunset_h", 1.5)
         self.controller_mode = data.get("controller_mode", CONTROLLER_PRICE)
         self.session_start_soc = data.get("session_start_soc")
         self.session_start_energy_added = data.get("session_start_energy_added")
@@ -266,6 +272,8 @@ class PlannerState:
             "ev_consumption_kwh_100km": self.ev_consumption_kwh_100km,
             "fuel_price_eur_l": self.fuel_price_eur_l,
             "master_switch_on": self.master_switch_on,
+            "home_battery_capacity_kwh": self.home_battery_capacity_kwh,
+            "pv_end_before_sunset_h": self.pv_end_before_sunset_h,
             "controller_mode": self.controller_mode,
             "session_start_soc": self.session_start_soc,
             "session_start_energy_added": self.session_start_energy_added,

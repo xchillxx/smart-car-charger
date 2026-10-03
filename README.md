@@ -105,9 +105,15 @@ because the car-side current limit works below a wallbox's own PV mode too.
 
 - Every **15 minutes** it averages the last **30 minutes** of PV production
   and house base load (house consumption minus the wallbox draw) and sets
-  the current so that nothing is fed into the grid while the home battery
-  keeps charging at a target rate that shrinks as it fills:
-  `(100 − battery SoC %) × 2 kW`, e.g. 1 kW at 50 %, 0.2 kW at 90 %.
+  the current so that nothing is fed into the grid. **Battery first**: the
+  surplus reserved for the home battery is
+  `missing energy to 100 % ÷ hours until the PV day ends` (next sunset
+  minus `Smart: PV-Ende vor Sonnenuntergang`, default 1.5 h), at most 6.9 kW,
+  using `Smart: Hausakku-Kapazität` (default 14 kWh). Early in the day that
+  is small; towards the end of the PV day the battery gets nearly everything
+  and the car only the rest. (Simulated on 9 days of history: the battery was
+  full on 6 days instead of 2, for ~5 % less car energy.) Without a readable
+  sunset it falls back to `(100 − SoC %) × 2 kW`.
 - Current is limited to **5–16 A** and only written when it changes. Below
   5 A (≈ 3.45 kW on three phases) the car holds the minimum for one window
   and **stops after two consecutive low windows**; it starts again as soon

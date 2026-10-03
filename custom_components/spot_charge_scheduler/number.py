@@ -31,6 +31,8 @@ async def async_setup_entry(
         IceConsumptionNumber(coordinator, entry),
         EvConsumptionNumber(coordinator, entry),
         FuelPriceNumber(coordinator, entry),
+        SmartBatteryCapacityNumber(coordinator, entry),
+        SmartPvEndNumber(coordinator, entry),
     ]
     for n in range(1, NUM_CYCLE_SLOTS + 1):
         entities.append(CycleSlotTargetSocNumber(coordinator, entry, n))
@@ -373,3 +375,52 @@ class CycleSlotRhythmNumber(_SlotNumber):
 
     async def async_set_native_value(self, value: float) -> None:
         await self.coordinator.async_set_slot_field(self._slot_no, self._slot_field, int(value))
+
+
+class SmartBatteryCapacityNumber(_BaseNumber):
+    """Usable capacity of the HOME battery, used by "Überschuss Smart" to work
+    out how much charge rate the battery needs to be full by the end of the
+    PV day (see smart_surplus.battery_target_deadline_kw)."""
+
+    _attr_name = "Smart: Hausakku-Kapazität"
+    _attr_icon = "mdi:home-battery"
+    _attr_native_min_value = 1
+    _attr_native_max_value = 100
+    _attr_native_step = 0.5
+    _attr_native_unit_of_measurement = "kWh"
+    _attr_mode = NumberMode.BOX
+
+    def __init__(self, coordinator: SpotChargeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_smart_home_battery_capacity"
+
+    @property
+    def native_value(self) -> float:
+        return self.coordinator.planner_state.home_battery_capacity_kwh
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self.coordinator.async_set_home_battery_capacity_kwh(value)
+
+
+class SmartPvEndNumber(_BaseNumber):
+    """How long before sunset PV stops being useful (October ≈ 1.5 h). The
+    home battery is reserved enough surplus to be full by then."""
+
+    _attr_name = "Smart: PV-Ende vor Sonnenuntergang"
+    _attr_icon = "mdi:weather-sunset-down"
+    _attr_native_min_value = 0
+    _attr_native_max_value = 5
+    _attr_native_step = 0.25
+    _attr_native_unit_of_measurement = "h"
+    _attr_mode = NumberMode.BOX
+
+    def __init__(self, coordinator: SpotChargeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_smart_pv_end_before_sunset"
+
+    @property
+    def native_value(self) -> float:
+        return self.coordinator.planner_state.pv_end_before_sunset_h
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self.coordinator.async_set_pv_end_before_sunset_h(value)
