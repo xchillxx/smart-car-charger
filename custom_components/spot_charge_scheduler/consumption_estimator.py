@@ -168,16 +168,24 @@ async def async_estimate_ev_consumption_kwh_100km(
         if first is not None and first > 1e11:  # epoch milliseconds
             first /= 1000.0
         soc_now_state = hass.states.get(soc_entity)
-        if first is not None and soc_now_state is not None:
+        soc_end = None
+        if soc_now_state is not None:
             try:
                 soc_end = float(soc_now_state.state)
             except ValueError:
                 soc_end = None
-            soc_start = await _soc_at(
-                hass, soc_entity, dt_util.utc_from_timestamp(first + 86400)
-            )
-            if soc_end is not None and soc_start is not None:
-                kwh = soc_adjusted_kwh(kwh, soc_start, soc_end, capacity_kwh)
-                if kwh <= 0:
-                    return None
+        soc_start = (
+            await _soc_at(hass, soc_entity, dt_util.utc_from_timestamp(first + 86400))
+            if first is not None
+            else None
+        )
+        # No SoC data -> NO estimate (the caller keeps the previous value).
+        # Falling back to the raw ratio is wrong: right after an HA restart
+        # the SoC sensor is briefly unknown, and the raw value (24.7 live on
+        # 2026-10-03, vs 17.7 corrected) would overwrite a good one.
+        if soc_end is None or soc_start is None:
+            return None
+        kwh = soc_adjusted_kwh(kwh, soc_start, soc_end, capacity_kwh)
+        if kwh <= 0:
+            return None
     return round(kwh / km * 100.0, 2)

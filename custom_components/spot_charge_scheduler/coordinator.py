@@ -878,6 +878,12 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         if estimate is not None and estimate > 0:
             self.planner_state.ev_consumption_kwh_100km = estimate
             self.planner_state.async_save()
+        else:
+            # No estimate this time (e.g. the SoC sensor is still unknown
+            # right after a restart): try again in 10 min, not in 6 h.
+            self._last_ev_recalc = now - timedelta(
+                seconds=EV_CONSUMPTION_RECALC_INTERVAL_SECONDS - 600
+            )
 
     def _combustion_comparison(self, now: datetime) -> dict | None:
         """Break-even electricity price: at/above how many €/kWh would the
