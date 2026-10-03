@@ -3,6 +3,7 @@ plan, and actuates the configured charge switch accordingly.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -180,6 +181,7 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self._smart_backfilled = False
         self._smart_last_wb_mode: str | None = None
         self._smart_is_charging: bool | None = None
+        self._smart_range_tries = 0
         # After a plug-in / mode-change decision the car may still start
         # charging by itself (wallbox unregulated): see _smart_enforce_idle.
         self._smart_forced_at: datetime | None = None
@@ -528,6 +530,7 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self.smart_decision = decision
         self._smart_applied = False
         self._smart_retry_at = None
+        self._smart_range_tries = 0
         return True
 
     def _smart_count_command(self, now: datetime) -> None:
@@ -638,21 +641,33 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
                 else:
                     self.smart_action = "bleibt_aus"
             else:
-                current = _get_float_state(self.hass, current_entity)
-                if current is None or round(current) != amps:
-                    await self.hass.services.async_call(
-                        "number", "set_value", {"entity_id": current_entity, "value": amps}, blocking=True
-                    )
-                    self._smart_count_command(now)
-                    self.smart_action = f"ampere_auf_{amps}"
-                else:
-                    self.smart_action = f"ampere_unveraendert_{amps}"
+                # START FIRST (that also wakes a sleeping car), set the
+                # current afterwards: while the car sleeps, the Fleet current
+                # entity keeps its last range (live 2026-10-03: max 6 A from
+                # the night), so setting 8 A before waking it was rejected as
+                # out_of_range and the charge never started.
+                started = ""
                 if not is_on:
                     await self.hass.services.async_call(
                         "switch", "turn_on", {"entity_id": switch_entity}, blocking=True
                     )
                     self._smart_count_command(now)
-                    self.smart_action += "_gestartet"
+                    started = "_gestartet"
+                target, complete, changed = await self._smart_set_amps(current_entity, amps, now)
+                self.smart_action = (
+                    f"ampere_auf_{target}" if changed else f"ampere_unveraendert_{target}"
+                ) + started
+                if not complete:
+                    self._smart_range_tries += 1
+                    if self._smart_range_tries < 4:
+                        # the car's reported range is still too low: the
+                        # allowed maximum is set; look again shortly.
+                        self.smart_action += "_begrenzt_neuer_versuch"
+                        self._smart_retry_at = now + timedelta(seconds=90)
+                        if changed:
+                            self._smart_last_change = now
+                        return
+                    self.smart_action += "_begrenzt"
         except Exception as err:  # noqa: BLE001 - vehicle API hiccups must not crash the cycle
             self._smart_fail_count += 1
             delay = (1, 2, 5, 10)[min(self._smart_fail_count, 4) - 1]
@@ -676,6 +691,41 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self._smart_fail_count = 0
         self._smart_retry_at = None
         self.smart_error = None
+
+    async def _smart_set_amps(self, entity: str, amps: int, now: datetime) -> tuple[int, bool, bool]:
+        """Set the charging current, respecting the range the car reports
+        (HA rejects values above the entity's `max`). A stale range — typical
+        right after waking the car — is refreshed once first. Returns
+        (value applied, reached the wanted value, a command was sent)."""
+        def _max() -> float | None:
+            state = self.hass.states.get(entity)
+            try:
+                return float(state.attributes.get("max")) if state is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        max_attr = _max()
+        if max_attr is not None and amps > max_attr:
+            try:
+                await asyncio.wait_for(
+                    self.hass.services.async_call(
+                        "homeassistant", "update_entity", {"entity_id": entity}, blocking=True
+                    ),
+                    timeout=45,
+                )
+            except Exception:  # noqa: BLE001 - a slow/failed refresh just means we clamp
+                _LOGGER.debug("Smart: refreshing %s failed", entity, exc_info=True)
+            max_attr = _max()
+        target = amps if max_attr is None or amps <= max_attr else int(max_attr)
+        changed = False
+        current = _get_float_state(self.hass, entity)
+        if target >= 1 and (current is None or round(current) != target):
+            await self.hass.services.async_call(
+                "number", "set_value", {"entity_id": entity, "value": target}, blocking=True
+            )
+            self._smart_count_command(now)
+            changed = True
+        return target, target == amps, changed
 
     async def _smart_fast_cycle(
         self, now: datetime, plugged_in: bool | None, is_home: bool | None
