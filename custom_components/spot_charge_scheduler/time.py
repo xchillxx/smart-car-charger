@@ -23,7 +23,8 @@ async def async_setup_entry(
 ) -> None:
     coordinator: SpotChargeCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
-        CycleSlotTimeTime(coordinator, entry, n) for n in range(1, NUM_CYCLE_SLOTS + 1)
+        [CycleSlotTimeTime(coordinator, entry, n) for n in range(1, NUM_CYCLE_SLOTS + 1)]
+        + [OneoffDepartureTime(coordinator, entry)]
     )
 
 
@@ -52,3 +53,28 @@ class CycleSlotTimeTime(CoordinatorEntity[SpotChargeCoordinator], TimeEntity):
         await self.coordinator.async_set_slot_field(
             self._slot_no, "time", value.strftime("%H:%M")
         )
+
+
+class OneoffDepartureTime(CoordinatorEntity[SpotChargeCoordinator], TimeEntity):
+    """Time of day of the one-off departure (its date is a separate entity)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Einmalige Abfahrt Uhrzeit"
+    _attr_icon = "mdi:clock-time-four-outline"
+
+    def __init__(self, coordinator: SpotChargeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_oneoff_departure_time"
+
+    @property
+    def device_info(self):
+        return hub_device_info(self._entry.entry_id)
+
+    @property
+    def native_value(self) -> dt_time:
+        h, m = parse_hhmm(self.coordinator.planner_state.oneoff_departure.get("time"))
+        return dt_time(hour=h, minute=m)
+
+    async def async_set_value(self, value: dt_time) -> None:
+        await self.coordinator.async_set_oneoff_departure("time", value.strftime("%H:%M"))

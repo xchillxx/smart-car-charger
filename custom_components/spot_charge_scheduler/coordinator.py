@@ -19,6 +19,7 @@ from . import (
     price_baseline,
     readiness,
     schedule,
+    smart_forecast,
     smart_history,
     smart_surplus,
 )
@@ -54,6 +55,7 @@ from .const import (
     DEFAULT_FUEL_TYPE,
     DOMAIN,
     EV_CONSUMPTION_RECALC_INTERVAL_SECONDS,
+    MISSED_DEADLINE_GRACE_HOURS,
     FUEL_FETCH_MIN_INTERVAL_SECONDS,
     FUEL_FETCH_RETRY_AFTER_FAILURE_SECONDS,
     PRICE_FETCH_MIN_INTERVAL_SECONDS,
@@ -182,6 +184,8 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self._smart_last_wb_mode: str | None = None
         self._smart_is_charging: bool | None = None
         self._smart_range_tries = 0
+        self._smart_forecast: list = []
+        self._smart_forecast_at: datetime | None = None
         # After a plug-in / mode-change decision the car may still start
         # charging by itself (wallbox unregulated): see _smart_enforce_idle.
         self._smart_forced_at: datetime | None = None
@@ -327,18 +331,62 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self._smart_last_slot = None
         await self.async_request_refresh()
 
-    def _hours_until_pv_end(self, now: datetime) -> float | None:
-        """Hours until PV stops being useful: the next sunset minus the
-        configured margin (None when the sun entity or its attribute is not
-        readable). After sunset `next_setting` is tomorrow's, so the value is
-        large — fine, there is no PV left to share then."""
+    def _pv_end(self) -> datetime | None:
+        """When PV stops being useful: the next sunset minus the configured
+        margin (None when the sun entity or its attribute is not readable).
+        After sunset `next_setting` is tomorrow's, so it lies far ahead —
+        fine, there is no PV left to share then."""
         sun = self.hass.states.get("sun.sun")
         raw = sun.attributes.get("next_setting") if sun is not None else None
         setting = dt_util.parse_datetime(raw) if isinstance(raw, str) else None
         if setting is None:
             return None
-        pv_end = setting - timedelta(hours=self.planner_state.pv_end_before_sunset_h)
-        return (pv_end - now).total_seconds() / 3600.0
+        return setting - timedelta(hours=self.planner_state.pv_end_before_sunset_h)
+
+    def _hours_until_pv_end(self, now: datetime) -> float | None:
+        pv_end = self._pv_end()
+        return None if pv_end is None else (pv_end - now).total_seconds() / 3600.0
+
+    # --- one-off departure (explicit date + time) ---
+
+    def _extra_occurrences(self, now: datetime) -> list[Occurrence]:
+        occ = schedule.oneoff_departure(self.planner_state.oneoff_departure, now)
+        return [occ] if occ is not None else []
+
+    def _auto_disable_oneoff_departure(self, now: datetime) -> None:
+        """A one-off departure is switched off by itself once it has passed
+        (with the same grace as a missed cycle target)."""
+        dep = self.planner_state.oneoff_departure
+        occ = schedule.oneoff_departure(dep, now)
+        if occ is not None and now - occ.start > timedelta(hours=MISSED_DEADLINE_GRACE_HOURS):
+            dep["enabled"] = False
+            self.planner_state.async_save()
+
+    async def async_set_oneoff_departure(self, field: str, value) -> None:
+        """field: enabled (bool) | date ("YYYY-MM-DD") | time ("HH:MM") |
+        target_soc (float). Switching it on without a date picks the next
+        occurrence of the chosen time (today if still ahead, else tomorrow)."""
+        dep = self.planner_state.oneoff_departure
+        dep[field] = value
+        if dep.get("enabled") and not dep.get("date"):
+            h, m = schedule.parse_hhmm(dep.get("time"))
+            now = dt_util.now()
+            ahead = now.replace(hour=h, minute=m, second=0, microsecond=0) > now
+            dep["date"] = (now.date() if ahead else now.date() + timedelta(days=1)).isoformat()
+        self._invalidate_price_cache()
+        self._smart_last_slot = None
+        self.planner_state.async_save()
+        await self.async_request_refresh()
+
+    async def _smart_refresh_forecast(self, now: datetime) -> None:
+        """Hourly PV forecast, refreshed at most every 30 min (kept when a
+        refresh fails)."""
+        if self._smart_forecast_at is not None and (now - self._smart_forecast_at).total_seconds() < 1800:
+            return
+        self._smart_forecast_at = now
+        rows = await smart_forecast.async_fetch(self.hass)
+        if rows:
+            self._smart_forecast = rows
 
     async def async_set_controller_mode(self, mode: str) -> None:
         self.planner_state.controller_mode = mode
@@ -387,7 +435,9 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         )
 
         await self._smart_backfill_once(now)
-        smart_ready = self._smart_cycle_inputs(now, is_charging, plugged_in)
+        await self._smart_refresh_forecast(now)
+        self._auto_disable_oneoff_departure(now)
+        smart_ready = self._smart_cycle_inputs(now, is_charging, plugged_in, current_soc)
 
         if is_charging is not None:
             capacity_estimator.process_charging_edge(
@@ -400,7 +450,7 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         # slots interleave without any explicit "advance to next" step;
         # it's always freshly derived.
         active: Occurrence | None = schedule.find_active_occurrence(
-            self.planner_state.cycle_slots, now, current_soc
+            self.planner_state.cycle_slots, now, current_soc, self._extra_occurrences(now)
         )
         active = self._apply_oneoff(active, now, current_soc)
         target_dt = active.start if active else None
@@ -495,7 +545,11 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
             self._smart_samples = history
 
     def _smart_cycle_inputs(
-        self, now: datetime, is_charging: bool | None, plugged_in: bool | None
+        self,
+        now: datetime,
+        is_charging: bool | None,
+        plugged_in: bool | None,
+        car_soc: float | None = None,
     ) -> bool:
         """Record one PV/base-load sample and, once per wall-clock quarter
         hour (or right after the car gets plugged in), take a new decision.
@@ -550,13 +604,43 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
             if hours_left is not None
             else None
         )
+        mode_label = "frist" if battery_target is not None else "linear"
+        extras: dict = {}
+        # Departure during the PV day: the PV after it can fill the battery
+        # without the car, so less has to be reserved BEFORE it.
+        pv_end = self._pv_end()
+        dep = schedule.find_active_occurrence(
+            self.planner_state.cycle_slots, now, car_soc, self._extra_occurrences(now)
+        )
+        if (
+            dep is not None and pv_end is not None and self._smart_forecast
+            and hours_left is not None and now < dep.start < pv_end
+        ):
+            after_kwh = smart_forecast.energy_between(self._smart_forecast, dep.start, pv_end)
+            means = smart_surplus.window_means(self._smart_samples, now)
+            base_kw = means[1] if means else 1.0
+            h_dep = (dep.start - now).total_seconds() / 3600.0
+            h_after = (pv_end - dep.start).total_seconds() / 3600.0
+            battery_target, fill_after = smart_surplus.battery_target_departure_kw(
+                bat_soc, self.planner_state.home_battery_capacity_kwh,
+                h_dep, after_kwh, base_kw, h_after,
+            )
+            mode_label = "abfahrt"
+            extras = {
+                "abfahrt": dep.start.isoformat(),
+                "abfahrt_name": dep.name,
+                "abfahrt_min_soc": dep.target_soc,
+                "prognose_nach_abfahrt_kwh": round(after_kwh, 1),
+                "fuellung_nach_abfahrt_kwh": round(fill_after, 1),
+            }
         decision = smart_surplus.decide(
             self._smart_samples, now, bat_soc, charging_now, self._smart_low_windows, forced,
             battery_target,
         )
         if decision is None:
             return True  # not enough data yet; retried next cycle
-        decision["akku_ziel_modus"] = "frist" if battery_target is not None else "linear"
+        decision["akku_ziel_modus"] = mode_label
+        decision.update(extras)
         decision["stunden_bis_pv_ende"] = round(hours_left, 2) if hours_left is not None else None
         if forced:
             self._smart_forced_at = now

@@ -105,6 +105,33 @@ def battery_target_deadline_kw(
     return max(0.0, min(max_kw, need_kwh / max(hours_left, MIN_HOURS_LEFT)))
 
 
+def battery_target_departure_kw(
+    battery_soc: float,
+    capacity_kwh: float,
+    hours_to_departure: float,
+    forecast_after_kwh: float,
+    base_kw: float,
+    hours_after_departure: float,
+    safety: float = 0.7,
+    max_kw: float = BATTERY_MAX_CHARGE_KW,
+) -> tuple[float, float]:
+    """(battery target kW, expected fill after departure in kWh) while the car
+    will leave before the PV day ends. The PV after the departure (forecast ×
+    safety, minus the house base load) can fill the battery without the car
+    in the way — only the part of the missing energy it can NOT cover has to
+    be reserved BEFORE the departure, spread over the hours until then."""
+    missing_kwh = max(0.0, (100.0 - battery_soc) / 100.0 * capacity_kwh)
+    after_h = max(0.0, hours_after_departure)
+    fill_after = min(
+        max_kw * after_h,
+        max(0.0, forecast_after_kwh * safety - max(base_kw, 0.0) * after_h),
+        missing_kwh,
+    )
+    needed_before = max(0.0, missing_kwh - fill_after)
+    target = min(max_kw, needed_before / max(hours_to_departure, MIN_HOURS_LEFT))
+    return max(0.0, target), fill_after
+
+
 def prune(samples: list[Sample], now: datetime) -> list[Sample]:
     cutoff = now - timedelta(minutes=AVERAGING_WINDOW_MINUTES + 1)
     return [s for s in samples if s.ts >= cutoff]

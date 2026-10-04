@@ -152,6 +152,12 @@ class PlannerState:
         # configured (see FuelPriceNumber / _maybe_fetch_fuel_price).
         self.fuel_price_eur_l: float = DEFAULT_FUEL_PRICE_EUR_L
         self.master_switch_on: bool = False
+        # One-off departure with an explicit date (e.g. "tomorrow 12:00"):
+        # same meaning as a cycle slot's "reach target SoC by time", but for a
+        # single dated occasion. Switches itself off after it has passed.
+        self.oneoff_departure: dict[str, Any] = {
+            "enabled": False, "date": None, "time": "12:00", "target_soc": 80.0,
+        }
         # "Überschuss Smart", battery-first target: the home battery's usable
         # capacity and how long before sunset PV stops being useful.
         self.home_battery_capacity_kwh: float = 14.0
@@ -211,6 +217,9 @@ class PlannerState:
             data.get("fuel_price_manual_eur_l", DEFAULT_FUEL_PRICE_EUR_L),
         )
         self.master_switch_on = data.get("master_switch_on", False)
+        stored_dep = data.get("oneoff_departure")
+        if isinstance(stored_dep, dict):
+            self.oneoff_departure = {**self.oneoff_departure, **stored_dep}
         self.home_battery_capacity_kwh = data.get("home_battery_capacity_kwh", 14.0)
         self.pv_end_before_sunset_h = data.get("pv_end_before_sunset_h", 1.5)
         self.controller_mode = data.get("controller_mode", CONTROLLER_PRICE)
@@ -272,6 +281,7 @@ class PlannerState:
             "ev_consumption_kwh_100km": self.ev_consumption_kwh_100km,
             "fuel_price_eur_l": self.fuel_price_eur_l,
             "master_switch_on": self.master_switch_on,
+            "oneoff_departure": self.oneoff_departure,
             "home_battery_capacity_kwh": self.home_battery_capacity_kwh,
             "pv_end_before_sunset_h": self.pv_end_before_sunset_h,
             "controller_mode": self.controller_mode,

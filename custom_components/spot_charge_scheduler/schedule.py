@@ -107,8 +107,31 @@ def expand_all(
     return result
 
 
+def oneoff_departure(
+    oneoff: dict | None, now: datetime, name: str = "Einmalige Abfahrt"
+) -> Occurrence | None:
+    """The one-off departure (explicit date + time, own minimum SoC) as an
+    occurrence, or None when it is off / unset / unparseable. Slot 0 marks
+    "not one of the numbered slots"."""
+    if not oneoff or not oneoff.get("enabled") or not oneoff.get("date"):
+        return None
+    h, m = parse_hhmm(oneoff.get("time"))
+    day = dt_util.parse_datetime(f"{oneoff['date']}T00:00:00")
+    if day is None:
+        return None
+    start = dt_util.as_local(day).replace(hour=h, minute=m, second=0, microsecond=0)
+    try:
+        target = float(oneoff.get("target_soc"))
+    except (TypeError, ValueError):
+        target = DEFAULT_TARGET_SOC
+    return Occurrence(0, start, target, name, 0)
+
+
 def find_active_occurrence(
-    slots: list[dict], now: datetime, current_soc: float | None
+    slots: list[dict],
+    now: datetime,
+    current_soc: float | None,
+    extra: tuple[Occurrence, ...] | list[Occurrence] = (),
 ) -> Occurrence | None:
     """The occurrence the coordinator should be planning/charging toward
     right now: the earliest still-unmet one across all slots, unless it's
@@ -120,7 +143,10 @@ def find_active_occurrence(
     window_start = now - timedelta(days=ACTIVE_LOOKBACK_DAYS)
     window_end = now + timedelta(days=ACTIVE_LOOKAHEAD_DAYS)
     grace = timedelta(hours=MISSED_DEADLINE_GRACE_HOURS)
-    for occ in expand_all(slots, window_start, window_end, now):
+    occurrences = expand_all(slots, window_start, window_end, now)
+    if extra:
+        occurrences = sorted([*occurrences, *extra], key=lambda o: o.start)
+    for occ in occurrences:
         if occ.start >= now:
             return occ
         if now - occ.start > grace:

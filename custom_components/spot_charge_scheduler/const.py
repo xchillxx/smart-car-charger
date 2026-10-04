@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "spot_charge_scheduler"
-PLATFORMS = ["sensor", "number", "switch", "select", "text", "time", "calendar"]
+PLATFORMS = ["sensor", "number", "switch", "select", "text", "time", "date", "calendar"]
 
 UPDATE_INTERVAL_SECONDS = 60
 

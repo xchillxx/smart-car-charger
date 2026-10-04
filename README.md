@@ -114,6 +114,18 @@ because the car-side current limit works below a wallbox's own PV mode too.
   and the car only the rest. (Simulated on 9 days of history: the battery was
   full on 6 days instead of 2, for ~5 % less car energy.) Without a readable
   sunset it falls back to `(100 − SoC %) × 2 kW`.
+- **Departure times.** The cycle slots double as departure times in Smart
+  mode: a slot's time is when the car leaves (its target SoC is the minimum
+  wanted by then), and a **one-off departure** with an explicit date + time
+  (`Einmalige Abfahrt aktiv / Datum / Uhrzeit / Mindest-SoC`, e.g. tomorrow
+  12:00) can be added; it switches itself off after it has passed (in price
+  mode it acts as one more "reach target by time" deadline). When the next
+  departure falls inside the PV day, the PV after it (hourly Forecast.Solar
+  forecast × 0.7, minus the base load) can fill the home battery without the
+  car, so only the part it cannot cover is reserved *before* the departure:
+  `(missing − fill after) ÷ hours until departure`. The car gets the rest
+  of the surplus until it leaves. Without the forecast, or when the departure
+  lies after the PV day, the plain "battery first" rule above applies.
 - Current is limited to **5–16 A** and only written when it changes. Below
   5 A (≈ 3.45 kW on three phases) the car holds the minimum for one window
   and **stops after two consecutive low windows**; it starts again as soon

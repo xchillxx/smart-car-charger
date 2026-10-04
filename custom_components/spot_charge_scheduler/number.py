@@ -33,6 +33,7 @@ async def async_setup_entry(
         FuelPriceNumber(coordinator, entry),
         SmartBatteryCapacityNumber(coordinator, entry),
         SmartPvEndNumber(coordinator, entry),
+        OneoffDepartureSocNumber(coordinator, entry),
     ]
     for n in range(1, NUM_CYCLE_SLOTS + 1):
         entities.append(CycleSlotTargetSocNumber(coordinator, entry, n))
@@ -424,3 +425,26 @@ class SmartPvEndNumber(_BaseNumber):
 
     async def async_set_native_value(self, value: float) -> None:
         await self.coordinator.async_set_pv_end_before_sunset_h(value)
+
+
+class OneoffDepartureSocNumber(_BaseNumber):
+    """Minimum state of charge wanted at the one-off departure."""
+
+    _attr_name = "Einmalige Abfahrt Mindest-SoC"
+    _attr_icon = "mdi:battery-arrow-up"
+    _attr_native_min_value = 5
+    _attr_native_max_value = 100
+    _attr_native_step = 5
+    _attr_native_unit_of_measurement = "%"
+    _attr_mode = NumberMode.BOX
+
+    def __init__(self, coordinator: SpotChargeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_oneoff_departure_soc"
+
+    @property
+    def native_value(self) -> float:
+        return float(self.coordinator.planner_state.oneoff_departure.get("target_soc") or 80.0)
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self.coordinator.async_set_oneoff_departure("target_soc", value)

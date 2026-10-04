@@ -26,7 +26,7 @@ async def async_setup_entry(
 ) -> None:
     coordinator: SpotChargeCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
-        [MasterSwitch(coordinator, entry)]
+        [MasterSwitch(coordinator, entry), OneoffDepartureSwitch(coordinator, entry)]
         + [CycleSlotEnabledSwitch(coordinator, entry, n) for n in range(1, NUM_CYCLE_SLOTS + 1)]
     )
 
@@ -81,3 +81,31 @@ class CycleSlotEnabledSwitch(CoordinatorEntity[SpotChargeCoordinator], SwitchEnt
 
     async def async_turn_off(self, **kwargs) -> None:
         await self.coordinator.async_set_slot_field(self._slot_no, "enabled", False)
+
+
+class OneoffDepartureSwitch(CoordinatorEntity[SpotChargeCoordinator], SwitchEntity):
+    """One dated departure on top of the cycle slots (e.g. "tomorrow 12:00");
+    it switches itself off once it has passed."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Einmalige Abfahrt aktiv"
+    _attr_icon = "mdi:car-clock"
+
+    def __init__(self, coordinator: SpotChargeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_oneoff_departure_enabled"
+
+    @property
+    def device_info(self):
+        return hub_device_info(self._entry.entry_id)
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.coordinator.planner_state.oneoff_departure.get("enabled"))
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await self.coordinator.async_set_oneoff_departure("enabled", True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self.coordinator.async_set_oneoff_departure("enabled", False)
