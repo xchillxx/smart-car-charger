@@ -78,6 +78,11 @@ CONF_CAR_CHARGE_LIMIT_ENTITY = "car_charge_limit_entity"
 # Optional hands-off gate: while this sensor's state equals the given value
 # (e.g. a wallbox working mode "PV Power" handled by another controller),
 # the scheduler never touches the charge switch.
+# Optional fallback for the car charge limit: a sensor (e.g. the always-live
+# TeslaMate charge-limit SoC) read when the primary number entity is
+# unknown/unavailable — typical right after the car woke up and its Fleet
+# entities have not refreshed yet.
+CONF_CAR_CHARGE_LIMIT_FALLBACK = "car_charge_limit_fallback_sensor_entity"
 CONF_PAUSE_MODE_SENSOR = "pause_mode_sensor_entity"
 CONF_PAUSE_MODE_VALUE = "pause_mode_value"
 DEFAULT_PAUSE_MODE_VALUE = "PV Power"

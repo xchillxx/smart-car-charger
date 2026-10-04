@@ -29,7 +29,8 @@
           "charge_current_entity": "Ladestrom-Entität (optional, number, A) — Stellgröße für „Überschuss Smart\" (z. B. Tesla-Ladestromstärke)",
           "pv_power_sensor_entity": "PV-Leistung-Sensor (optional, kW) — für „Überschuss Smart\"",
           "house_load_sensor_entity": "Hausverbrauch-Sensor inkl. Wallbox (optional, kW) — für „Überschuss Smart\"",
-          "home_battery_soc_sensor_entity": "Hausakku-Ladezustand (optional, %) — für „Überschuss Smart\""
+          "home_battery_soc_sensor_entity": "Hausakku-Ladezustand (optional, %) — für „Überschuss Smart\"",
+          "car_charge_limit_fallback_sensor_entity": "Fallback-Ladelimit-Sensor (optional) — wird gelesen, wenn die Auto-Ladelimit-Entität oben unbekannt ist (z. B. TeslaMate-Ladelimit)"
         }
       }
     },
@@ -66,7 +67,8 @@
           "charge_current_entity": "Ladestrom-Entität (optional, number, A) — Stellgröße für „Überschuss Smart\" (z. B. Tesla-Ladestromstärke)",
           "pv_power_sensor_entity": "PV-Leistung-Sensor (optional, kW) — für „Überschuss Smart\"",
           "house_load_sensor_entity": "Hausverbrauch-Sensor inkl. Wallbox (optional, kW) — für „Überschuss Smart\"",
-          "home_battery_soc_sensor_entity": "Hausakku-Ladezustand (optional, %) — für „Überschuss Smart\""
+          "home_battery_soc_sensor_entity": "Hausakku-Ladezustand (optional, %) — für „Überschuss Smart\"",
+          "car_charge_limit_fallback_sensor_entity": "Fallback-Ladelimit-Sensor (optional) — wird gelesen, wenn die Auto-Ladelimit-Entität oben unbekannt ist (z. B. TeslaMate-Ladelimit)"
         }
       }
     }

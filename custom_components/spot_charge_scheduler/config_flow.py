@@ -12,6 +12,7 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_BATTERY_CAPACITY_KWH_DEFAULT,
     CONF_CAR_CHARGE_LIMIT_ENTITY,
+    CONF_CAR_CHARGE_LIMIT_FALLBACK,
     CONF_PAUSE_MODE_SENSOR,
     CONF_PAUSE_MODE_VALUE,
     DEFAULT_PAUSE_MODE_VALUE,
@@ -87,6 +88,9 @@ def _schema(defaults: dict | None = None) -> vol.Schema:
         vol.Optional(
             CONF_CAR_CHARGE_LIMIT_ENTITY, **_default(d, CONF_CAR_CHARGE_LIMIT_ENTITY)
         ): selector.EntitySelector(selector.EntitySelectorConfig(domain="number")),
+        vol.Optional(
+            CONF_CAR_CHARGE_LIMIT_FALLBACK, **_default(d, CONF_CAR_CHARGE_LIMIT_FALLBACK)
+        ): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
         vol.Optional(
             CONF_PAUSE_MODE_SENSOR, **_default(d, CONF_PAUSE_MODE_SENSOR)
         ): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),

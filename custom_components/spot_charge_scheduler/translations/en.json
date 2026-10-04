@@ -29,7 +29,8 @@
           "charge_current_entity": "Charging-current entity (optional, number, A) — setpoint for “Überschuss Smart” (e.g. the Tesla charging-current number)",
           "pv_power_sensor_entity": "PV power sensor (optional, kW) — for “Überschuss Smart”",
           "house_load_sensor_entity": "House consumption sensor incl. wallbox (optional, kW) — for “Überschuss Smart”",
-          "home_battery_soc_sensor_entity": "Home-battery state of charge (optional, %) — for “Überschuss Smart”"
+          "home_battery_soc_sensor_entity": "Home-battery state of charge (optional, %) — for “Überschuss Smart”",
+          "car_charge_limit_fallback_sensor_entity": "Fallback charge-limit sensor (optional) — read when the car charge-limit entity above is unknown (e.g. the TeslaMate charge limit)"
         }
       }
     },
@@ -66,7 +67,8 @@
           "charge_current_entity": "Charging-current entity (optional, number, A) — setpoint for “Überschuss Smart” (e.g. the Tesla charging-current number)",
           "pv_power_sensor_entity": "PV power sensor (optional, kW) — for “Überschuss Smart”",
           "house_load_sensor_entity": "House consumption sensor incl. wallbox (optional, kW) — for “Überschuss Smart”",
-          "home_battery_soc_sensor_entity": "Home-battery state of charge (optional, %) — for “Überschuss Smart”"
+          "home_battery_soc_sensor_entity": "Home-battery state of charge (optional, %) — for “Überschuss Smart”",
+          "car_charge_limit_fallback_sensor_entity": "Fallback charge-limit sensor (optional) — read when the car charge-limit entity above is unknown (e.g. the TeslaMate charge limit)"
         }
       }
     }

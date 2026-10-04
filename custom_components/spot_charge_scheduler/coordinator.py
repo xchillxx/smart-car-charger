@@ -26,6 +26,7 @@ from . import (
 from .const import (
     CONF_BATTERY_CAPACITY_KWH_DEFAULT,
     CONF_CAR_CHARGE_LIMIT_ENTITY,
+    CONF_CAR_CHARGE_LIMIT_FALLBACK,
     CONF_PAUSE_MODE_SENSOR,
     CONF_PAUSE_MODE_VALUE,
     DEFAULT_PAUSE_MODE_VALUE,
@@ -331,6 +332,15 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self._smart_last_slot = None
         await self.async_request_refresh()
 
+    def _car_charge_limit(self) -> float | None:
+        """The car's charge limit: the configured number entity, or — when
+        that is unknown/unavailable (Fleet entities stay empty while the car
+        sleeps and right after it woke up) — the fallback sensor."""
+        value = _get_float_state(self.hass, self._config.get(CONF_CAR_CHARGE_LIMIT_ENTITY))
+        if value is None:
+            value = _get_float_state(self.hass, self._config.get(CONF_CAR_CHARGE_LIMIT_FALLBACK))
+        return value
+
     def _pv_end(self) -> datetime | None:
         """When PV stops being useful: the next sunset minus the configured
         margin (None when the sun entity or its attribute is not readable).
@@ -429,7 +439,7 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         # if the user pointed us at it — the ceiling for opportunistic top-up.
         # None (unset or unavailable) simply disables the top-up; the
         # guaranteed target is unaffected.
-        car_charge_limit = _get_float_state(self.hass, self._config.get(CONF_CAR_CHARGE_LIMIT_ENTITY))
+        car_charge_limit = self._car_charge_limit()
         is_home = _get_is_home(
             self.hass, self._config.get(CONF_LOCATION_TRACKER_ENTITY), self._config.get(CONF_HOME_ZONE_ENTITY)
         )
