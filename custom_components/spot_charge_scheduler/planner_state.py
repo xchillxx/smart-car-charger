@@ -138,10 +138,6 @@ class PlannerState:
         # this percentile of the same price window. Not read by the planner —
         # see the "Teuer-Schwelle" sensor.
         self.expensive_percentile: float = DEFAULT_EXPENSIVE_PERCENTILE
-        # One-time "charge to X % today only" override (see coordinator
-        # _apply_oneoff): valid for the local date it was set on, then lapses.
-        self.oneoff_target_soc: float | None = None
-        self.oneoff_date: str | None = None
         # Combustion-engine comparison inputs (see coordinator break-even calc).
         # ev_consumption_kwh_100km is auto-overwritten from recorder statistics
         # once there's enough odometer/energy history (consumption_estimator.py).
@@ -204,8 +200,6 @@ class PlannerState:
         self.expensive_percentile = data.get(
             "expensive_percentile", DEFAULT_EXPENSIVE_PERCENTILE
         )
-        self.oneoff_target_soc = data.get("oneoff_target_soc")
-        self.oneoff_date = data.get("oneoff_date")
         self.ice_consumption_l_100km = data.get(
             "ice_consumption_l_100km", DEFAULT_ICE_CONSUMPTION_L_100KM
         )
@@ -275,8 +269,6 @@ class PlannerState:
             "power_samples": self.power_samples,
             "opportunistic_percentile": self.opportunistic_percentile,
             "expensive_percentile": self.expensive_percentile,
-            "oneoff_target_soc": self.oneoff_target_soc,
-            "oneoff_date": self.oneoff_date,
             "ice_consumption_l_100km": self.ice_consumption_l_100km,
             "ev_consumption_kwh_100km": self.ev_consumption_kwh_100km,
             "fuel_price_eur_l": self.fuel_price_eur_l,

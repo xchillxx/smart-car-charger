@@ -10,7 +10,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util
 
 from .const import CONF_CAR_CHARGE_LIMIT_ENTITY, DOMAIN, NUM_CYCLE_SLOTS
 from .coordinator import SpotChargeCoordinator
@@ -26,7 +25,6 @@ async def async_setup_entry(
         ChargePowerNumber(coordinator, entry),
         OpportunisticPercentileNumber(coordinator, entry),
         ExpensivePercentileNumber(coordinator, entry),
-        OneoffTargetNumber(coordinator, entry),
         CarChargeLimitNumber(coordinator, entry),
         IceConsumptionNumber(coordinator, entry),
         EvConsumptionNumber(coordinator, entry),
@@ -165,32 +163,6 @@ class ExpensivePercentileNumber(_BaseNumber):
 
     async def async_set_native_value(self, value: float) -> None:
         await self.coordinator.async_set_expensive_percentile(value)
-
-
-class OneoffTargetNumber(_BaseNumber):
-    """One-time charge target for today only. 0 = off. While set, the active
-    cycle's target is raised to this value if its deadline falls today
-    (otherwise charging aims at this value by end of day); it lapses on its
-    own at midnight and never lowers a cycle's regular target."""
-
-    _attr_name = "Einmaliges Ladeziel (heute)"
-    _attr_icon = "mdi:battery-clock"
-    _attr_native_min_value = 0
-    _attr_native_max_value = 100
-    _attr_native_step = 5
-    _attr_native_unit_of_measurement = "%"
-    _attr_mode = NumberMode.SLIDER
-
-    def __init__(self, coordinator: SpotChargeCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_oneoff_target"
-
-    @property
-    def native_value(self) -> float:
-        return self.coordinator.oneoff_target_today(dt_util.now()) or 0
-
-    async def async_set_native_value(self, value: float) -> None:
-        await self.coordinator.async_set_oneoff_target(value)
 
 
 class CarChargeLimitNumber(_BaseNumber):

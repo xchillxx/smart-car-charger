@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import replace
 from datetime import datetime, timedelta
 
 from homeassistant.core import HomeAssistant
@@ -251,18 +250,6 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         self.planner_state.async_save()
         await self.async_request_refresh()
 
-    async def async_set_oneoff_target(self, value: float) -> None:
-        """0 (or below) clears the override; anything else applies to today."""
-        if value <= 0:
-            self.planner_state.oneoff_target_soc = None
-            self.planner_state.oneoff_date = None
-        else:
-            self.planner_state.oneoff_target_soc = value
-            self.planner_state.oneoff_date = dt_util.now().date().isoformat()
-        self._invalidate_price_cache()
-        self.planner_state.async_save()
-        await self.async_request_refresh()
-
     def is_paused_by_mode(self) -> bool:
         """True while the configured pause-mode sensor shows the pause value
         (another controller owns the wallbox). Unknown/unavailable or an
@@ -275,35 +262,6 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
             return False
         value = self._config.get(CONF_PAUSE_MODE_VALUE) or DEFAULT_PAUSE_MODE_VALUE
         return state.state == value
-
-    def oneoff_target_today(self, now: datetime) -> float | None:
-        st = self.planner_state
-        if st.oneoff_target_soc is None or st.oneoff_date != now.date().isoformat():
-            return None
-        return st.oneoff_target_soc
-
-    def _apply_oneoff(
-        self, active: Occurrence | None, now: datetime, current_soc: float | None
-    ) -> Occurrence | None:
-        """Fold the one-time "today only" target into the active occurrence.
-        A cycle whose deadline falls today gets its target raised (never
-        lowered); otherwise a synthetic end-of-day deadline stands in until
-        the target is met. Lapses at the date change."""
-        override = self.oneoff_target_today(now)
-        if override is None:
-            if self.planner_state.oneoff_target_soc is not None:
-                self.planner_state.oneoff_target_soc = None
-                self.planner_state.oneoff_date = None
-                self.planner_state.async_save()
-            return active
-        end_of_day = now.replace(hour=23, minute=45, second=0, microsecond=0)
-        if active is not None and active.start <= end_of_day:
-            if override > active.target_soc:
-                return replace(active, target_soc=override, name=f"{active.name} (einmalig {override:.0f} %)")
-            return active
-        if current_soc is not None and current_soc >= override:
-            return active
-        return Occurrence(slot=0, start=max(end_of_day, now), target_soc=override, name="Einmalig heute", rhythm_days=0)
 
     async def async_set_ice_consumption_l_100km(self, value: float) -> None:
         self.planner_state.ice_consumption_l_100km = value
@@ -462,7 +420,6 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
         active: Occurrence | None = schedule.find_active_occurrence(
             self.planner_state.cycle_slots, now, current_soc, self._extra_occurrences(now)
         )
-        active = self._apply_oneoff(active, now, current_soc)
         target_dt = active.start if active else None
         target_soc = active.target_soc if active else None
 
@@ -741,6 +698,8 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
             return
         if plugged_in is False or is_home is False:
             self._smart_applied = True
+            self.smart_error = None
+            self._smart_fail_count = 0
             self.smart_action = "nicht_angesteckt" if plugged_in is False else "nicht_zuhause"
             return
         if (
@@ -749,12 +708,24 @@ class SpotChargeCoordinator(DataUpdateCoordinator):
             and current_soc >= car_charge_limit
         ):
             self._smart_applied = True
+            self.smart_error = None
+            self._smart_fail_count = 0
             self.smart_action = "ladelimit_erreicht"
             return
         current_entity = self._config.get(CONF_CHARGE_CURRENT_ENTITY)
         if not current_entity:
             self._smart_applied = True
             self.smart_action = "keine_ladestrom_entitaet"
+            return
+        if (
+            decision["ampere"] > 0
+            and current_soc is None
+            and not self._smart_charge_active()
+        ):
+            # No live car data (e.g. TeslaMate unavailable): starting blind
+            # could hit a car that is already at its limit — the vehicle API
+            # rejects that ("complete") and every attempt is billed. Wait.
+            self.smart_action = "wartet_auf_fahrzeugdaten"
             return
 
         amps = decision["ampere"]
